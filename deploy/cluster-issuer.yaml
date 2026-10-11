@@ -1,0 +1,15 @@
+# Let's Encrypt issuer for the VPS (used by the "cert-manager.io/cluster-issuer: letsencrypt" annotation).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: you@example.com   # <- change me
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: traefik
