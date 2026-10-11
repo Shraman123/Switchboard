@@ -1,0 +1,23 @@
+# VPS (k3s). Only these values differ from local; templates are identical.
+siteUrl: https://store.example.com          # <- your domain (DNS A record -> VPS IP)
+adminEmail: ops@example.com
+image:
+  repository: ghcr.io/YOUR_GH_USER/switchboard/woo-store
+  tag: "0.1.0"                               # immutable tags in prod; upgrade = new tag
+  pullPolicy: IfNotPresent
+mcp:
+  image:
+    repository: ghcr.io/YOUR_GH_USER/switchboard/woo-mcp
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+db:
+  storage: 10Gi
+web:
+  storage: 10Gi
+storageClass: local-path                     # k3s default; use your cloud's class if any
+ingress:
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    enabled: true

@@ -1,0 +1,5 @@
+servers:
+  notes:
+    image: { repository: ghcr.io/YOUR_GH_USER/switchboard/notes-mcp, tag: "0.1.0", pullPolicy: IfNotPresent }
+  everything:
+    image: { repository: ghcr.io/YOUR_GH_USER/switchboard/everything-mcp, tag: "0.1.0", pullPolicy: IfNotPresent }

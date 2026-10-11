@@ -1,0 +1,22 @@
+# VPS (k3s). Only these values differ from local; templates are identical.
+publicUrl: https://gateway.example.com      # MCP clients use https://gateway.example.com/mcp
+backend:
+  image: { repository: ghcr.io/YOUR_GH_USER/switchboard/gateway, tag: "0.1.0", pullPolicy: IfNotPresent }
+  replicas: 2
+  cookieSecure: true                         # session cookie only over HTTPS
+dashboard:
+  image: { repository: ghcr.io/YOUR_GH_USER/switchboard/dashboard, tag: "0.1.0", pullPolicy: IfNotPresent }
+postgres:
+  storage: 5Gi
+storageClass: local-path
+ssrf:
+  allowHttp: false                           # external upstreams must use HTTPS
+  allowedInternalSuffixes:                   # in-cluster upstreams stay reachable over http
+    - .store.svc.cluster.local
+    - .mcp-servers.svc.cluster.local
+ingress:
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    enabled: true

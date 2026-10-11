@@ -129,9 +129,10 @@ class UpstreamManager {
   private timer?: NodeJS.Timeout;
   private serversCache?: { at: number; rows: ServerRow[] };
 
-  // Short cache: every replica reads config from Postgres, so an admin's
-  // change on one replica is visible on all of them within a second.
-  async servers(maxAgeMs = 1000): Promise<ServerRow[]> {
+  // Every replica reads server config from Postgres on each request (one
+  // small query), so an admin disabling a server on one replica takes effect
+  // on all of them immediately. Callers may opt into a short cache.
+  async servers(maxAgeMs = 0): Promise<ServerRow[]> {
     if (this.serversCache && Date.now() - this.serversCache.at < maxAgeMs) return this.serversCache.rows;
     const rows = await q<ServerRow>("SELECT * FROM servers ORDER BY created_at");
     this.serversCache = { at: Date.now(), rows };
