@@ -1,0 +1,27 @@
+# Local cluster: k3s in Docker, so local and the VPS (k3s) run the same
+# distribution, the same Traefik ingress and the same local-path storage.
+#   k3d cluster create --config deploy/k3d-config.yaml
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: switchboard
+servers: 1
+agents: 0
+kubeAPI:
+  # Pin the API to loopback: on Windows the default (host.docker.internal)
+  # can resolve to a LAN address that the API server does not answer on.
+  host: "127.0.0.1"
+  hostIP: "127.0.0.1"
+  hostPort: "6445"
+ports:
+  - port: 80:80
+    nodeFilters: [loadbalancer]
+  - port: 443:443
+    nodeFilters: [loadbalancer]
+registries:
+  # Local registry: push to localhost:5111, pull in-cluster as
+  # k3d-registry.localhost:5111 (layer-cached, much lighter than image import).
+  create:
+    name: registry.localhost
+    host: "127.0.0.1"
+    hostPort: "5111"

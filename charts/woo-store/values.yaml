@@ -1,0 +1,70 @@
+# Public URL of the storefront. Drives the Ingress host and WordPress home/siteurl.
+siteUrl: http://store.localtest.me
+title: Switchboard Demo Store
+timezone: Asia/Kolkata
+currency: INR
+country: "IN:WB"
+adminUser: storeadmin
+adminEmail: admin@example.com
+
+# Secret with keys: db-password, db-root-password, admin-password,
+# wc-consumer-key, wc-consumer-secret, mcp-token.
+# Created by scripts/create-secrets.sh (or your secret manager); never in git.
+credentialsSecret: store-credentials
+
+image:
+  repository: switchboard/woo-store
+  tag: dev
+  pullPolicy: IfNotPresent
+
+mcp:
+  image:
+    repository: switchboard/woo-mcp
+    tag: dev
+    pullPolicy: IfNotPresent
+  replicas: 1
+  requestTimeoutMs: 10000
+  # Only pods matching this selector (in this namespace) may call the MCP server.
+  allowedClients:
+    namespace: gateway
+    podLabels:
+      app.kubernetes.io/component: gateway
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 192Mi }
+
+db:
+  image: mariadb:11.8.9
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+web:
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 768Mi }
+
+bootstrap:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+# Empty = cluster default StorageClass (local-path on k3s / k3d).
+storageClass: ""
+
+ingress:
+  className: traefik
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+networkPolicy:
+  enabled: true
+  # Where the ingress controller runs (allowed to reach the storefront).
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik

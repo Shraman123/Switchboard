@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-wp-content
+  labels: {{- include "store.labels" . | nindent 4 }}
+  annotations:
+    # Store content must survive `helm uninstall` unless deleted on purpose.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.web.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "store.selector" (dict "root" . "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: 1
+  # ReadWriteOnce volume: the old pod must release it before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "store.selector" (dict "root" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "store.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      securityContext:
+        {{- include "store.podSecurity" . | nindent 8 }}
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+      initContainers:
+        - name: seed-content
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/opt/store/seed-content.sh"]
+          securityContext: {{- include "store.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.bootstrap.resources | nindent 12 }}
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html/wp-content
+      containers:
+        - name: wordpress
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- include "store.containerSecurity" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env: {{- include "store.wpEnv" . | nindent 12 }}
+          startupProbe:
+            httpGet: { path: /wp-includes/images/blank.gif, port: http }
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            # Executes PHP and opens a DB connection: 500 when MariaDB is down.
+            httpGet: { path: /wp-login.php, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            # Static file: only checks Apache itself, so a DB outage does not
+            # cause restart loops.
+            httpGet: { path: /wp-includes/images/blank.gif, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts:
+            - name: content
+              mountPath: /var/www/html/wp-content
+      volumes:
+        - name: content
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-wp-content
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-storefront
+  labels: {{- include "store.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ include "store.host" . | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" .Release.Name) }}
+  {{- end }}
+  rules:
+    - host: {{ include "store.host" . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-web
+                port: { name: http }

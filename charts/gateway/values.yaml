@@ -1,0 +1,104 @@
+# Public URL of the dashboard + MCP endpoint (MCP clients use <publicUrl>/mcp).
+publicUrl: http://gateway.localtest.me
+
+# Secret with keys: db-password, session-secret, encryption-key, admin-email,
+# admin-password, llm-api-key (may be empty). Created by scripts/create-secrets.sh.
+secretName: gateway-secrets
+# Secret holding upstream credentials used only for first-boot seeding.
+seedSecretName: gateway-upstream-seed
+
+backend:
+  image: { repository: switchboard/gateway, tag: dev, pullPolicy: IfNotPresent }
+  # Stateless MCP endpoint + Postgres-backed state: safe to run >1 replica.
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  healthIntervalMs: 10000
+  healthTimeoutMs: 4000
+  defaultCallTimeoutMs: 15000
+  rateLimitPerMinute: 120
+  cookieSecure: false
+
+dashboard:
+  image: { repository: switchboard/dashboard, tag: dev, pullPolicy: IfNotPresent }
+  replicas: 1
+  resources:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 64Mi }
+
+postgres:
+  image: postgres:17.11-alpine
+  storage: 1Gi
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 384Mi }
+
+storageClass: ""
+
+llm:
+  baseUrl: https://api.groq.com/openai/v1
+  model: llama-3.3-70b-versatile
+  timezone: Asia/Kolkata
+  maxSteps: 8
+
+# SSRF: hostnames under these suffixes may resolve to cluster-internal IPs.
+# Everything else must resolve to a public address.
+ssrf:
+  allowedInternalSuffixes:
+    - .store.svc.cluster.local
+    - .mcp-servers.svc.cluster.local
+  allowHttp: true
+
+# Registered on first boot only (later changes happen in the dashboard).
+seedServers:
+  - slug: woo
+    name: WooCommerce
+    url: http://woo-store-mcp.store.svc.cluster.local:8080/mcp
+    authType: bearer
+    credentialEnv: SEED_WOO_TOKEN
+    policies:
+      create_product: { adminOnly: true }
+      update_order_status: { adminOnly: true }
+  - slug: notes
+    name: Team Notes
+    url: http://notes.mcp-servers.svc.cluster.local:8080/mcp
+    authType: bearer
+    credentialEnv: SEED_NOTES_TOKEN
+  - slug: everything
+    name: MCP Reference (everything)
+    url: http://everything.mcp-servers.svc.cluster.local:8080/mcp
+    authType: none
+    timeoutMs: 10000
+    policies:
+      get-env: { hidden: true }
+      trigger-elicitation-request: { hidden: true }
+      trigger-elicitation-request-async: { hidden: true }
+      trigger-sampling-request: { hidden: true }
+      trigger-sampling-request-async: { hidden: true }
+      trigger-url-elicitation: { hidden: true }
+      trigger-long-running-operation: { hidden: true }
+      toggle-simulated-logging: { hidden: true }
+      toggle-subscriber-updates: { hidden: true }
+      get-roots-list: { hidden: true }
+      gzip-file-as-resource: { hidden: true }
+      simulate-research-query: { hidden: true }
+
+ingress:
+  className: traefik
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+networkPolicy:
+  enabled: true
+  ingressController:
+    namespace: kube-system
+    podLabels:
+      app.kubernetes.io/name: traefik
+  # Namespaces whose MCP servers the gateway may reach (port 8080).
+  upstreamNamespaces: [store, mcp-servers]
+  # Internet egress for external MCP servers and the LLM API, minus every
+  # private / link-local range (blocks cloud metadata at the network layer).
+  internetEgress: true

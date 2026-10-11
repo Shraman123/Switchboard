@@ -1,0 +1,32 @@
+# One host: the SPA at /, its API at /api, the team MCP endpoint at /mcp.
+# /metrics, /healthz and /readyz are deliberately not routed (internal only).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ include "gw.host" . | quote }}]
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" .Release.Name) }}
+  {{- end }}
+  rules:
+    - host: {{ include "gw.host" . | quote }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: {{ .Release.Name }}-backend, port: { name: http } } }
+          # Prefix, not Exact: Traefik ranks rules by length, and an Exact /mcp
+          # rule would lose to the catch-all PathPrefix(/) of the SPA.
+          - path: /mcp
+            pathType: Prefix
+            backend: { service: { name: {{ .Release.Name }}-backend, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ .Release.Name }}-dashboard, port: { name: http } } }

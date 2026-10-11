@@ -1,0 +1,5 @@
+publicUrl: http://gateway.localtest.me
+backend:
+  image: { repository: registry.localhost:5111/switchboard/gateway, tag: dev, pullPolicy: Always }
+dashboard:
+  image: { repository: registry.localhost:5111/switchboard/dashboard, tag: dev, pullPolicy: Always }

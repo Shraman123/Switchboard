@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels: {{- include "gw.labels" . | nindent 4 }}
+data:
+  # Non-secret config only. Credentials referenced here by env-var name are
+  # injected from Secrets in the Deployment below.
+  SEED_SERVERS: {{ .Values.seedServers | toJson | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: gateway
+  ports:
+    - { name: http, port: 8080, targetPort: http }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels: {{- include "gw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+      annotations:
+        checksum/config: {{ .Values.seedServers | toJson | sha256sum | trunc 16 }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      # The gateway never talks to the Kubernetes API: no token mounted.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          securityContext: {{- include "gw.containerSecurity" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 8080 }
+          envFrom:
+            - configMapRef: { name: {{ .Release.Name }}-config }
+          env:
+            - { name: PORT, value: "8080" }
+            - { name: PUBLIC_URL, value: {{ .Values.publicUrl | quote }} }
+            - { name: COOKIE_SECURE, value: {{ .Values.backend.cookieSecure | quote }} }
+            - { name: HEALTH_INTERVAL_MS, value: {{ .Values.backend.healthIntervalMs | quote }} }
+            - { name: HEALTH_TIMEOUT_MS, value: {{ .Values.backend.healthTimeoutMs | quote }} }
+            - { name: DEFAULT_CALL_TIMEOUT_MS, value: {{ .Values.backend.defaultCallTimeoutMs | quote }} }
+            - { name: RATE_LIMIT_PER_MINUTE, value: {{ .Values.backend.rateLimitPerMinute | quote }} }
+            - { name: SSRF_ALLOWED_INTERNAL_SUFFIXES, value: {{ join "," .Values.ssrf.allowedInternalSuffixes | quote }} }
+            - { name: SSRF_ALLOW_HTTP, value: {{ .Values.ssrf.allowHttp | quote }} }
+            - { name: LLM_BASE_URL, value: {{ .Values.llm.baseUrl | quote }} }
+            - { name: LLM_MODEL, value: {{ .Values.llm.model | quote }} }
+            - { name: CHAT_TIMEZONE, value: {{ .Values.llm.timezone | quote }} }
+            - { name: CHAT_MAX_STEPS, value: {{ .Values.llm.maxSteps | quote }} }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: db-password } }
+            - name: DATABASE_URL
+              value: postgres://switchboard:$(DB_PASSWORD)@{{ .Release.Name }}-postgres:5432/switchboard
+            - name: SESSION_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: session-secret } }
+            - name: ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: encryption-key } }
+            - name: ADMIN_EMAIL
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: admin-email } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: admin-password } }
+            - name: LLM_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: llm-api-key, optional: true } }
+            - name: SEED_WOO_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.seedSecretName }}, key: woo-token, optional: true } }
+            - name: SEED_NOTES_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.seedSecretName }}, key: notes-token, optional: true } }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 4
+          resources: {{- toYaml .Values.backend.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 32Mi }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-backend
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: gateway

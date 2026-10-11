@@ -1,0 +1,12 @@
+# Local k3d. *.localtest.me is public DNS that resolves to 127.0.0.1,
+# so no /etc/hosts edits are needed; k3d maps host port 80 to Traefik.
+siteUrl: http://store.localtest.me
+image:
+  repository: registry.localhost:5111/switchboard/woo-store
+  tag: dev
+  pullPolicy: Always
+mcp:
+  image:
+    repository: registry.localhost:5111/switchboard/woo-mcp
+    tag: dev
+    pullPolicy: Always

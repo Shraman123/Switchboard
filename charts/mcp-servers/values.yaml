@@ -1,0 +1,23 @@
+# Each entry becomes a Deployment + ClusterIP Service on port 8080.
+servers:
+  notes:
+    image: { repository: switchboard/notes-mcp, tag: dev, pullPolicy: IfNotPresent }
+    # Secret key holding the bearer token the server requires.
+    tokenSecret: { name: notes-credentials, key: token }
+    healthPath: /healthz
+    resources:
+      requests: { cpu: 10m, memory: 48Mi }
+      limits: { cpu: 200m, memory: 128Mi }
+  everything:
+    image: { repository: switchboard/everything-mcp, tag: dev, pullPolicy: IfNotPresent }
+    tokenSecret: null
+    healthPath: null # no HTTP health route: TCP probes
+    resources:
+      requests: { cpu: 10m, memory: 64Mi }
+      limits: { cpu: 200m, memory: 192Mi }
+
+# Only the gateway may call these servers.
+allowedClients:
+  namespace: gateway
+  podLabels:
+    app.kubernetes.io/component: gateway

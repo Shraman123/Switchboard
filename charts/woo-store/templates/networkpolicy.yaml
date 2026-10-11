@@ -1,0 +1,122 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default deny: nothing in this release talks to anything unless allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-default-deny
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-dns
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# MariaDB: only the WordPress pod and the bootstrap job of *this* store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-db
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (dict "root" . "component" "db") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "web") | nindent 14 }}
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "bootstrap") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 3306 }
+---
+# WordPress: public traffic via the ingress controller, API traffic from this
+# store's MCP server. It may only call out to its own database.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-web
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (dict "root" . "component" "web") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressController.namespace }} }
+          podSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressController.podLabels | nindent 14 }}
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "mcp") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "db") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 3306 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-bootstrap
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (dict "root" . "component" "bootstrap") | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "db") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 3306 }
+---
+# WooCommerce MCP server: callable only by the gateway; may only call this
+# store's WordPress. It cannot reach any other store or the internet.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-mcp
+  labels: {{- include "store.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "store.selector" (dict "root" . "component" "mcp") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.mcp.allowedClients.namespace }} }
+          podSelector:
+            matchLabels: {{- toYaml .Values.mcp.allowedClients.podLabels | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: {{- include "store.selector" (dict "root" . "component" "web") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: mcp-servers
+description: Example upstream MCP servers (team notes + the official "everything" reference server)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

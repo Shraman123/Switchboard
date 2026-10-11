@@ -1,0 +1,5 @@
+servers:
+  notes:
+    image: { repository: registry.localhost:5111/switchboard/notes-mcp, tag: dev, pullPolicy: Always }
+  everything:
+    image: { repository: registry.localhost:5111/switchboard/everything-mcp, tag: dev, pullPolicy: Always }

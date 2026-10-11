@@ -1,0 +1,36 @@
+# Default deny for every pod in this namespace; then: the gateway may call
+# the servers, and the servers may resolve DNS. No other egress (no internet).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-and-dns
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: upstream-mcp
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Values.allowedClients.namespace }} }
+          podSelector:
+            matchLabels: {{- toYaml .Values.allowedClients.podLabels | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+          podSelector:
+            matchLabels: { k8s-app: kube-dns }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
