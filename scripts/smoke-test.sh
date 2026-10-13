@@ -44,6 +44,10 @@ check "admin login" "api '$A' POST /auth/login '{\"email\":\"$ADMIN_EMAIL\",\"pa
 KEY_A=$(api "$A" POST /keys '{"name":"smoke-admin"}' | json "d['key']")
 
 echo "== servers"
+for i in $(seq 1 30); do  # give a just-restarted upstream time to reconnect
+  [ "$(api "$A" GET /servers | json "all(x['status']=='connected' for x in d)")" = True ] && break
+  sleep 2
+done
 for s in woo notes everything; do
   check "$s is connected" "[ \"\$(server_status $s)\" = connected ]"
 done
@@ -84,7 +88,8 @@ echo "== kill an upstream (scale to 0 so it stays dead)"
 kubectl -n "$SERVERS_NS" scale deploy/everything --replicas=0 >/dev/null
 kubectl -n "$SERVERS_NS" wait --for=delete pod -l app.kubernetes.io/name=everything --timeout=60s >/dev/null 2>&1
 OUT=$(call "$KEY_A" everything__echo '{"message":"x"}')
-check "call to dead upstream fails fast with a clear error" "echo '$OUT' | grep -qiE 'unreachable|refused|timed out|unavailable'"
+# (grep on the variable directly: the message itself may contain quotes)
+if grep -qiE 'unreachable|refused|timed out|unavailable' <<<"$OUT"; then ok "call to dead upstream fails fast with a clear error"; else bad "call to dead upstream fails fast with a clear error"; fi
 check "dashboard shows it as unreachable" "[ \"\$(server_status everything)\" = unreachable ]"
 check "other servers keep working" "call '$KEY_A' woo__list_products '{\"per_page\":1}' | grep -q products && call '$KEY_A' notes__list_notes | grep -q title"
 check "dead server's tools leave the list" "! tools '$KEY_A' | grep -q everything__"

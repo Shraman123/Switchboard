@@ -59,6 +59,8 @@ That script:
 
 If your network blocks DNS answers that resolve to 127.0.0.1, add `127.0.0.1 store.localtest.me gateway.localtest.me` to your hosts file.
 
+**k3d quirk:** after `k3d cluster stop/start`, k3s's embedded NetworkPolicy controller can come back without per-pod firewall rules (policies exist but aren't enforced; the smoke test's isolation check catches it). `docker restart k3d-switchboard-server-0` fixes it.
+
 Re-print the credentials at any time with `scripts/credentials.sh`. Run the end-to-end checks with `scripts/smoke-test.sh` (30 checks: two users, permissions, revoke, disable, dead upstream, SSRF, NetworkPolicy isolation, audit). Run the gateway unit tests with `cd services/gateway && npm test`.
 
 **Deterministic chat tests.** To exercise the chat tool loop without any model, use the scripted fake model:
