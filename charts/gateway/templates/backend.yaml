@@ -74,6 +74,7 @@ spec:
             - { name: LLM_MODEL, value: {{ .Values.llm.model | quote }} }
             - { name: CHAT_TIMEZONE, value: {{ .Values.llm.timezone | quote }} }
             - { name: CHAT_MAX_STEPS, value: {{ .Values.llm.maxSteps | quote }} }
+            - { name: LLM_TIMEOUT_MS, value: {{ .Values.llm.timeoutMs | quote }} }
             - name: DB_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: db-password } }
             - name: DATABASE_URL

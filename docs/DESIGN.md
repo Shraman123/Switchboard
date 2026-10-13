@@ -70,7 +70,7 @@ The gateway's own MCP endpoint is **stateless** Streamable HTTP. Each request bu
 
 1. Mint a 5-minute **chat token** for the signed-in user (HMAC, purpose-bound, so it can't be used as a session cookie or vice versa).
 2. Connect to the gateway's *own* `/mcp` over HTTP as that user. The agent therefore goes through exactly the same auth → policy → rate limit → audit path as Claude Code would. It can't see admin-only tools if the user is a member, and its calls appear in the audit log as `via: chat agent` under the user.
-3. Send the tools (OpenAI function-calling format) + history to the LLM. The provider is any OpenAI-compatible endpoint (default Groq free tier; Ollama or OpenAI work by changing two values).
+3. Send the tools (OpenAI function-calling format) + history to the LLM. The provider is any OpenAI-compatible endpoint. Locally it is `qwen2.5:3b` on Ollama on the host GPU (no key needed); in prod the default is Groq's free tier. Switching is two values.
 4. Execute each requested tool call through MCP, append results, repeat until the model answers in text or 8 steps pass. The UI shows each step's tool, arguments, result and latency.
 
 The system prompt carries the current date/time in the store timezone ("today" questions) and a standing rule that tool descriptions and results are untrusted data, not instructions.

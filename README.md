@@ -31,11 +31,13 @@ Dashboard chat agent ──────────────┘   (auth · po
 
 ## Local setup (k3d)
 
-**Prerequisites:** Docker, [k3d](https://k3d.io) ≥ 5.8, kubectl, Helm 3, bash (Git Bash on Windows), Python 3 (used by the scripts for JSON), and about 4 GB of RAM free for Docker.
+**Prerequisites:** Docker, [k3d](https://k3d.io) ≥ 5.8, kubectl, Helm 3, bash (Git Bash on Windows), Python 3 (used by the scripts for JSON), about 4 GB of RAM free for Docker, and [Ollama](https://ollama.com) for the chat agent's local model.
+
+**Chat model.** `values-local.yaml` points the chat agent at Ollama on the host (`192.168.65.254:11434`, Docker Desktop's host address; on Linux use the docker bridge gateway IP) with `qwen2.5:3b`, and adds one narrow NetworkPolicy egress rule for exactly that IP and port. To use a hosted model instead (e.g. Groq's free tier), remove the `llm:` and `networkPolicy:` blocks from `values-local.yaml` and run `LLM_API_KEY=gsk_... scripts/create-secrets.sh` before deploying. Any OpenAI-compatible endpoint works.
 
 ```bash
-# Optional: a free Groq key (console.groq.com) for the chat agent. Any OpenAI-compatible API works.
-export LLM_API_KEY=gsk_...
+# Chat agent model: by default a local model through Ollama on the host (no key, no quota).
+ollama pull qwen2.5:3b
 
 scripts/up-local.sh
 ```
@@ -59,7 +61,7 @@ If your network blocks DNS answers that resolve to 127.0.0.1, add `127.0.0.1 sto
 
 Re-print the credentials at any time with `scripts/credentials.sh`. Run the end-to-end checks with `scripts/smoke-test.sh` (30 checks: two users, permissions, revoke, disable, dead upstream, SSRF, NetworkPolicy isolation, audit). Run the gateway unit tests with `cd services/gateway && npm test`.
 
-**No LLM key?** You can still exercise the chat tool loop against the scripted fake model:
+**Deterministic chat tests.** To exercise the chat tool loop without any model, use the scripted fake model:
 
 ```bash
 docker build -t localhost:5111/switchboard/fake-llm:dev test/fake-llm && docker push localhost:5111/switchboard/fake-llm:dev

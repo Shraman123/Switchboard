@@ -41,6 +41,7 @@ export const config = {
     apiKey: process.env.LLM_API_KEY ?? "",
     model: opt("LLM_MODEL", "llama-3.3-70b-versatile"),
     maxSteps: Number(opt("CHAT_MAX_STEPS", "8")),
+    timeoutMs: Number(opt("LLM_TIMEOUT_MS", "120000")),
     timezone: opt("CHAT_TIMEZONE", "Asia/Kolkata"),
   },
 

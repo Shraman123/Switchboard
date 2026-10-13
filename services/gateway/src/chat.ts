@@ -26,7 +26,10 @@ export interface ToolStep {
 const MAX_TOOL_RESULT_CHARS = 8000;
 const DIRECT_TOOL_LIMIT = 40; // above this, use the gateway's search mode
 
-export const chatConfigured = () => Boolean(config.llm.apiKey);
+// A key is required for hosted providers; a self-hosted endpoint (e.g. Ollama)
+// can run without one.
+const DEFAULT_LLM_URL = "https://api.groq.com/openai/v1";
+export const chatConfigured = () => Boolean(config.llm.apiKey) || config.llm.baseUrl !== DEFAULT_LLM_URL;
 
 function systemPrompt(user: User) {
   const now = new Date();
@@ -56,7 +59,7 @@ const sanitizeSchema = (s: any) => {
 async function llm(messages: any[], tools: any[]) {
   const res = await fetch(`${config.llm.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${config.llm.apiKey}` },
+    headers: { "content-type": "application/json", ...(config.llm.apiKey ? { authorization: `Bearer ${config.llm.apiKey}` } : {}) },
     body: JSON.stringify({
       model: config.llm.model,
       messages,
@@ -64,7 +67,7 @@ async function llm(messages: any[], tools: any[]) {
       tool_choice: tools.length ? "auto" : undefined,
       temperature: 0.2,
     }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(config.llm.timeoutMs),
   });
   const body: any = await res.json().catch(() => ({}));
   if (!res.ok) {

@@ -41,6 +41,7 @@ llm:
   model: llama-3.3-70b-versatile
   timezone: Asia/Kolkata
   maxSteps: 8
+  timeoutMs: 120000
 
 # SSRF: hostnames under these suffixes may resolve to cluster-internal IPs.
 # Everything else must resolve to a public address.
@@ -102,3 +103,5 @@ networkPolicy:
   # Internet egress for external MCP servers and the LLM API, minus every
   # private / link-local range (blocks cloud metadata at the network layer).
   internetEgress: true
+  # Extra egress rules (NetworkPolicy egress entries), e.g. to reach a local LLM.
+  extraEgress: []

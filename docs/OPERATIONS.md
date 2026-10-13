@@ -35,6 +35,7 @@ scripts/credentials.sh
 | `backend.cookieSecure` | false | true |
 | `ssrf.allowHttp` | true | false (external upstreams must be HTTPS) |
 | image repository / tag / pullPolicy | `registry.localhost:5111/...:dev`, `Always` | `ghcr.io/...:0.1.0`, `IfNotPresent` |
+| `llm.baseUrl` / `llm.model` | local Ollama on the host (`qwen2.5:3b`) + one egress exception | hosted OpenAI-compatible API (Groq default), key in `gateway-secrets` |
 | `storageClass`, `*.storage` | default class, 1-2 Gi | `local-path` (or a CSI class), 5-10 Gi |
 
 Secrets don't live in values in either environment: `scripts/create-secrets.sh` generates them in the cluster (idempotent). On a real team, swap it for Sealed Secrets or External Secrets Operator writing the **same Secret names**; the charts don't change. `--secrets-encryption` makes k3s encrypt Secrets at rest in its datastore.

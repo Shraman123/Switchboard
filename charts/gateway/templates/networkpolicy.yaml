@@ -103,4 +103,8 @@ spec:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 80 }
     {{- end }}
+    {{- with .Values.networkPolicy.extraEgress }}
+    # Explicit, narrow exceptions (e.g. a local LLM on the host in values-local.yaml).
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}
