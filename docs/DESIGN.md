@@ -31,9 +31,10 @@
 
 | Component | What it does | Why this shape |
 |---|---|---|
-| **woo-store** chart | WordPress 7.1 + WooCommerce 11.2 (one image), MariaDB StatefulSet, an idempotent bootstrap Job, the WooCommerce MCP server, NetworkPolicies | One chart = one store with *its own* MCP server. This is the unit the multi-store bonus would stamp out per namespace. |
+| **woo-store** chart | WordPress 7.1 + WooCommerce 11.2 (one image), MariaDB StatefulSet, an idempotent bootstrap Job, the WooCommerce MCP server, NetworkPolicies | One chart = one store with *its own* MCP server. This is exactly the unit the provisioner installs per namespace for every new store. |
 | **woo-mcp** | MCP server (Streamable HTTP, stateless) with `list_products`, `create_product`, `list_orders`, `get_order`, `update_order_status` | Written from scratch on the official TypeScript SDK. |
 | **gateway** chart | Backend (2 replicas), dashboard (nginx), Postgres, Ingress, NetworkPolicies, PDB | The backend is both an MCP *client* (to every upstream) and an MCP *server* (to every member). |
+| **provisioner** (in the gateway chart) | Reconcile loop that turns rows in Postgres (stores, hosted servers) into cluster resources | The only component with Kubernetes API rights, kept out of the internet-facing gateway pods. |
 | **mcp-servers** chart | Two extra upstreams: `notes` (my small server, needs a bearer token) and `everything` (the official MCP reference server, unmodified) | Shows a credentialed upstream and a third-party one. Both expose a tool named `echo`, a real name collision. |
 
 ## How the WooCommerce MCP server talks to the store
@@ -95,6 +96,72 @@ The system prompt carries the current date/time in the store timezone ("today" q
   - notes/everything ← only the gateway; → DNS only.
   - gateway-backend → its Postgres, ports 8080 in `store` + `mcp-servers`, and the internet on 80/443 **excluding** 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16, 127/8.
 - **Secrets:** generated at deploy time by `scripts/create-secrets.sh` (idempotent, never overwrites) into `store-credentials`, `notes-credentials`, `gateway-secrets`, `gateway-upstream-seed`. Charts only reference Secret names. Nothing secret is in git or in values files.
+
+## Store provisioning (multi-store bonus)
+
+**Desired state in Postgres, a reconciler acting on it.** The dashboard API never calls Kubernetes. `POST /api/stores` validates the request, checks the per-user and global limits, and inserts a row with `status=provisioning` and a deadline. The **provisioner** Deployment works on that row:
+
+1. Leader election via a Postgres advisory lock, so only one instance acts.
+2. Every 3 s, it picks up rows that are `provisioning` or `deleting` (up to 3 at a time, so several stores provision concurrently) and runs these steps for each:
+
+| Step | How | Idempotent because |
+|---|---|---|
+| Namespace `store-<id>` | server-side apply, labels `switchboard.dev/managed`, `…/upstream`, PSS `restricted` | apply |
+| RoleBinding to the tenant role | server-side apply | apply |
+| Secret `store-credentials` (DB, WP admin, salts, WC REST key, MCP token) | create-if-absent with random values, never overwritten | the DB on the volume keeps using them |
+| Helm release `woo-store` from the **same chart** as the main store, with ResourceQuota + LimitRange on | `helm upgrade --install --wait` | Helm |
+| Register the MCP server in the gateway | `INSERT … ON CONFLICT (slug)`, credential encrypted, write tools admin/owner-only | upsert |
+
+**Tool names say which store.** Each store's server slug is the store id, so its tools are `kolkata-sweets__list_orders` and so on. The existing naming scheme does this without any new mechanism.
+
+**Recovery.** The loop is level-triggered: it re-reads state every tick, and every step can be re-run.
+- If the provisioner dies mid-install, the next leader finds the row still `provisioning`. It sees the Helm release stuck in `pending-install`, clears it and installs again. A store that never became ready holds no user data, so its volumes are wiped too. A half-initialised MariaDB data directory does not survive, which is a bug I hit by killing the provisioner during testing.
+- While Helm waits, the provisioner also watches the pods. A crash loop or an unpullable image ends the attempt early with the pod's own reason.
+- After 2 automatic retries, or once the deadline passes (15 min), the store goes to `failed` with the reason. The user can **Retry** or **Delete**.
+
+**Teardown order.**
+1. Delete the server row, so the tools disappear from every client at once.
+2. `helm uninstall`.
+3. Delete the namespace, which removes the PVCs and volumes, the Secrets and the Ingress.
+4. Wait until the namespace is gone, then drop the store row.
+
+**Isolation.** The store chart's NetworkPolicies are namespace-local. A store's MCP pod may only reach *its own* WordPress, WordPress only its own MariaDB, and only gateway pods may call the MCP server. Nothing selects pods in another store's namespace, so cross-store traffic is denied. The platform smoke test proves it from inside store A's MCP pod.
+
+**Ownership.** A store's owner gets its admin-only tools, such as `create_product`, without being a platform admin: `denialFor` treats `servers.owner_id` like the admin role for that server only.
+
+## Hosted MCP servers
+
+The flow mirrors stores, without Helm. The admin gives an image, port, path, env and secret env (secret env is encrypted in Postgres). The provisioner then applies four objects into the pre-made `mcp-hosted` namespace, which has a quota, a LimitRange, default-deny and PSS `restricted`:
+- a Secret;
+- a Deployment: forced UID 10001, read-only root filesystem, all capabilities dropped, no service-account token, fixed resource size, TCP probes;
+- a Service on port 8080;
+- a NetworkPolicy: ingress only from gateway pods, egress DNS only, or the public internet without private ranges if the admin opted in.
+
+It waits until the Deployment is available, failing early with `ImagePullBackOff`, crash log lines and the like, and then registers the server. Images must match a registry allowlist (`provisioner.hostedImagePrefixes`).
+
+## Least privilege for the provisioner
+
+| Layer | Grants |
+|---|---|
+| ClusterRole (cluster-wide) | namespaces: get/list/create/patch/delete; rolebindings: get/create/patch/delete; `bind` on exactly one ClusterRole (the tenant role) |
+| Tenant ClusterRole, bound **per namespace** by a RoleBinding the provisioner creates | Deployments, StatefulSets, Jobs, Services, Secrets, PVCs, Ingress, NetworkPolicies, quota objects; read-only pods/log. No exec, no RBAC, nothing cluster-scoped |
+| ValidatingAdmissionPolicy | It may only create or delete namespaces named `store-*` with the managed label, and write RoleBindings only inside managed namespaces |
+
+Without the policy, "create RoleBindings anywhere + bind the tenant role" would let it grant itself Secrets access in `kube-system`. With it, the worst a compromised provisioner can do is damage stores. The gateway pods still mount no token at all.
+
+## OAuth (MCP authorization spec)
+
+The gateway is the protected resource and its own authorization server: one issuer, so there's no external IdP to run.
+- `/mcp` 401s carry `WWW-Authenticate: Bearer resource_metadata=…` (RFC 9728).
+- Discovery: `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server` (RFC 8414).
+- Dynamic client registration (RFC 7591): public clients only, capped and garbage-collected because registration is open.
+- `/oauth/authorize` requires PKCE S256 and only a registered redirect URI (loopback ports may vary, per RFC 8252). It sends the browser to the dashboard's `/consent` screen, which uses the normal session login.
+- The approval issues a 60-second, single-use code bound to the client, redirect URI, PKCE challenge, user and resource.
+- `/oauth/token` issues a 1-hour access token `sbo_…`, audience-bound to `<publicUrl>/mcp` (RFC 8707), and a 30-day refresh token that **rotates**. Presenting an already-rotated refresh token revokes the whole grant family: someone else has a copy.
+- Codes and tokens are stored only as SHA-256 hashes, like API keys.
+- On `/mcp` an OAuth token resolves to the approving user with `via=oauth`. The audit log shows the app's name next to the user, and the API-key and chat paths are unchanged.
+
+Tradeoff: tokens are opaque and looked up in Postgres on each request, like API keys, rather than self-contained JWTs. Revocation (disconnect, user disabled, replay) is therefore instant, and one indexed query per request is fine at team scale.
 
 ## What changes for production
 

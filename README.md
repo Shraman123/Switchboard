@@ -2,7 +2,9 @@
 
 A WooCommerce store, an MCP server for it (written from scratch), and a team **MCP gateway** with a React dashboard and a chat agent, all running on Kubernetes and deployed with Helm.
 
-An admin registers MCP servers once. Every team member then gets **every enabled server's tools through one URL and their own API key**, in Claude Code, Cursor, MCP Inspector or the dashboard's chat. Members never see upstream credentials, and every tool call lands in an audit log under the person who made it.
+An admin registers MCP servers once. Every team member then gets **every enabled server's tools through one URL and their own API key (or a browser login over OAuth)**, in Claude Code, Cursor, MCP Inspector or the dashboard's chat. Members never see upstream credentials, and every tool call lands in an audit log under the person who made it.
+
+On top of that it is a small **store platform**: anyone on the team can create a new WooCommerce store from the dashboard. It is provisioned into its own namespace with the same Helm chart, and its MCP server is registered in the gateway automatically. Admins can also run MCP servers **from a container image** instead of a URL.
 
 ```
 Claude Code / Cursor / Inspector ──┐                       ┌─▶ woo-mcp ──OAuth1 REST──▶ WooCommerce ─▶ MariaDB
@@ -20,31 +22,31 @@ Dashboard chat agent ──────────────┘   (auth · po
 | Path | What |
 |---|---|
 | `services/woo-mcp` | WooCommerce MCP server (TypeScript, MCP SDK, Streamable HTTP): `list_products`, `create_product`, `list_orders`, `get_order`, `update_order_status` |
-| `services/gateway` | Gateway backend: MCP client to upstreams, MCP server at `/mcp`, dashboard API at `/api`, chat agent, audit, metrics |
+| `services/gateway` | Gateway backend: MCP client to upstreams, MCP server at `/mcp`, dashboard API at `/api`, OAuth authorization server (`src/oauth.ts`), chat agent, audit, metrics |
+| `services/gateway/src/provisioner` | Provisioner (its own Deployment, same codebase): reconciles stores and hosted MCP servers into the cluster with Helm and the Kubernetes API |
 | `services/dashboard` | React dashboard (Vite, served by unprivileged nginx) |
 | `services/notes-mcp` | Second upstream: small team-notes MCP server that requires a bearer token |
 | `images/woo-store` | WordPress 7.1.3 + WooCommerce 11.2.1 image and the idempotent store bootstrap |
 | `images/everything-mcp` | Third upstream: the official MCP reference server, unmodified |
 | `charts/{woo-store,gateway,mcp-servers}` | Helm charts, each with `values.yaml`, `values-local.yaml`, `values-prod.yaml` |
-| `scripts/` | `up-local.sh`, `deploy.sh`, `create-secrets.sh`, `build-images.sh`, `credentials.sh`, `smoke-test.sh` |
+| `scripts/` | `up-local.sh`, `deploy.sh`, `create-secrets.sh`, `set-llm-key.sh`, `build-images.sh`, `credentials.sh`, `smoke-test.sh`, `smoke-test-platform.sh`, `check-manifests.py` |
+| `.github/workflows/ci.yml` | CI: build + unit tests; Helm lint, render, kubeconform and policy check; full k3d deploy + both smoke tests; image release to GHCR |
 | `test/fake-llm` | Scripted OpenAI-compatible endpoint for testing the chat tool loop without an API key |
 
 ## Local setup (k3d)
 
-**Prerequisites:** Docker, [k3d](https://k3d.io) ≥ 5.8, kubectl, Helm 3, bash (Git Bash on Windows), Python 3 (used by the scripts for JSON), about 4 GB of RAM free for Docker, and [Ollama](https://ollama.com) for the chat agent's local model.
+**Prerequisites:** Docker, [k3d](https://k3d.io) ≥ 5.8, kubectl, Helm 3, bash (Git Bash on Windows), Python 3 (used by the scripts for JSON), Node 22 (for the OAuth test), and about 4 GB of RAM free for Docker. Each provisioned store needs about 700 MB more.
 
-**Chat model.** `values-local.yaml` points the chat agent at Ollama on the host (`192.168.65.254:11434`, Docker Desktop's host address; on Linux use the docker bridge gateway IP) with `qwen2.5:3b`, and adds one narrow NetworkPolicy egress rule for exactly that IP and port. To use a hosted model instead (e.g. Groq's free tier), remove the `llm:` and `networkPolicy:` blocks from `values-local.yaml` and run `LLM_API_KEY=gsk_... scripts/create-secrets.sh` before deploying. Any OpenAI-compatible endpoint works.
+**Chat model.** By default the chat agent uses Groq's free tier (`llama-3.3-70b-versatile`, OpenAI-compatible). Get a key at console.groq.com and store it with `scripts/set-llm-key.sh`. The script reads the key without echoing it, writes it into the `gateway-secrets` Secret and restarts the gateway. For a fully offline setup, use a local model through [Ollama](https://ollama.com): run `ollama pull qwen2.5:3b`, then `LLM=ollama scripts/deploy.sh local`. That adds `values-ollama.yaml`: the Ollama URL on the host (`192.168.65.254:11434`, Docker Desktop's host address) plus one narrow egress rule for exactly that IP and port. Any OpenAI-compatible endpoint works.
 
 ```bash
-# Chat agent model: by default a local model through Ollama on the host (no key, no quota).
-ollama pull qwen2.5:3b
-
 scripts/up-local.sh
+scripts/set-llm-key.sh      # paste the Groq key (input hidden)
 ```
 
 That script:
 1. creates a single-node k3s cluster with a local registry (`deploy/k3d-config.yaml`; host ports 80/443 → Traefik, API on `127.0.0.1:6445`);
-2. builds the six images and pushes them to the registry;
+2. builds the seven images and pushes them to the registry;
 3. generates every Secret with random values (`scripts/create-secrets.sh`, idempotent);
 4. installs the three charts with `values-local.yaml`;
 5. prints the URLs and the generated admin passwords.
@@ -56,12 +58,17 @@ That script:
 | http://store.localtest.me | Storefront (wp-admin at `/wp-admin`, user `storeadmin`) |
 | http://gateway.localtest.me | Dashboard |
 | http://gateway.localtest.me/mcp | The team MCP endpoint |
+| http://&lt;store-id&gt;-store.localtest.me | Each provisioned store |
 
 If your network blocks DNS answers that resolve to 127.0.0.1, add `127.0.0.1 store.localtest.me gateway.localtest.me` to your hosts file.
 
 **k3d quirk:** after `k3d cluster stop/start`, k3s's embedded NetworkPolicy controller can come back without per-pod firewall rules (policies exist but aren't enforced; the smoke test's isolation check catches it). `docker restart k3d-switchboard-server-0` fixes it.
 
-Re-print the credentials at any time with `scripts/credentials.sh`. Run the end-to-end checks with `scripts/smoke-test.sh` (30 checks: two users, permissions, revoke, disable, dead upstream, SSRF, NetworkPolicy isolation, audit). Run the gateway unit tests with `cd services/gateway && npm test`.
+Re-print the credentials at any time with `scripts/credentials.sh`. End-to-end checks:
+
+- `scripts/smoke-test.sh`: 30 checks. Two users, permissions, revoke, disable, dead upstream, SSRF, NetworkPolicy isolation, audit.
+- `scripts/smoke-test-platform.sh`: provisions two stores at once; checks isolation, quotas, routing and teardown; deploys and removes a hosted MCP server; runs the OAuth flow with the official MCP SDK client (`services/gateway/test/oauth-e2e.ts`).
+- Unit tests: `cd services/gateway && npm test` and `cd services/woo-mcp && npm test`. CI runs all of the above on every push.
 
 **Deterministic chat tests.** To exercise the chat tool loop without any model, use the scripted fake model:
 
@@ -123,6 +130,32 @@ Then ask: *"What orders came in today?"* or, across two servers, *"Summarise tod
 
 Clients that struggle with many tools can use `http://gateway.localtest.me/mcp?tools=search`, which exposes `switchboard__search_tools` + `switchboard__call_tool`.
 
+### Connect with OAuth instead of a key
+Clients that implement the MCP authorization spec need only the URL:
+
+```bash
+claude mcp add --transport http switchboard https://gateway.<domain>/mcp   # then /mcp → Authenticate
+```
+
+The flow:
+1. The client gets a 401 that points at `/.well-known/oauth-protected-resource`.
+2. It discovers the gateway's authorization server and registers itself.
+3. It opens the browser on the dashboard's consent screen.
+4. After **Allow**, it holds a 1-hour access token, refreshed automatically, that acts as you through the same policy and audit path as an API key.
+
+**API keys → Connected apps** lists connected clients and disconnects them.
+
+### Stores (multi-store provisioning)
+Dashboard → **Stores → Create store**.
+- The store shows *Provisioning* with the current step, then *Ready* with its URL (about 2–3 minutes).
+- Its tools appear for everyone as `<store-id>__list_orders` and so on. The store's owner and admins can use its write tools.
+- **Delete** removes the namespace, database, volumes, Secrets, Ingress and the gateway registration.
+
+To try it, ask the chat agent: *"Compare today's orders across kolkata-sweets and howrah-bakery."*
+
+### Hosted MCP servers (admin)
+Dashboard → **Hosted → Deploy from image**. You give the image, port, path, plain and secret environment variables, and whether it may reach the internet. The server runs in the `mcp-hosted` namespace and is registered once its pod is ready. A pod that can't start fails with the reason, such as `ImagePullBackOff` or the last lines of its crash log.
+
 ### Chat agent
 Dashboard → **Chat**. It uses the same gateway tools, as you: members can't trigger admin-only tools through it, and each call shows in the audit log as *chat agent* under your name. Each answer lists the tools it called; expand one to see the arguments and result.
 
@@ -138,10 +171,15 @@ Dashboard → **Chat**. It uses the same gateway tools, as you: members can't tr
 | Kill an upstream pod → others keep working, dashboard shows Unreachable | `smoke-test.sh` (scale to 0), or `kubectl -n mcp-servers delete pod -l app.kubernetes.io/name=everything` |
 | Every call audited under the right user | `smoke-test.sh` + Audit page |
 
-## Beyond the core (stand-out items attempted)
+## Bonus and stand-out items
 
 | Item | Where |
 |---|---|
+| **Bonus: multi-store provisioning.** Create and delete stores from the dashboard, with status, URL and created time; several can provision at once. Each store is a Helm release of the same chart in its own namespace, with its own database, Secret, PVCs and Ingress host. Its MCP server is registered automatically with store-named tools. Teardown removes the namespace, volumes, Secrets and registration. NetworkPolicies isolate stores from each other. Guardrails: ResourceQuota + LimitRange per store, per-user and global store limits, and a provisioning deadline. Create is idempotent and resumes safely after a crash (tested by killing the provisioner mid-install). | `services/gateway/src/provisioner/`, `charts/gateway/templates/provisioner.yaml`, `charts/woo-store/templates/quota.yaml`, Stores page, `scripts/smoke-test-platform.sh` |
+| **OAuth on the gateway** (3). Follows the MCP authorization spec: protected-resource and authorization-server metadata, dynamic client registration, PKCE S256, audience-bound short-lived tokens, rotating refresh tokens with replay detection, a consent screen, and revocation from Connected apps. | `services/gateway/src/oauth.ts`, Consent and API keys pages, `test/oauth-e2e.ts` |
+| **Hosted MCP servers** (5). Deploy by image, with its own Secret, fixed limits, a non-root read-only pod, a per-server NetworkPolicy and a registry allowlist; removal is clean. | `services/gateway/src/provisioner/hosted.ts`, Hosted page |
+| **Least-privilege RBAC** (6). Only the provisioner has Kubernetes API rights. It can bind one tenant ClusterRole in each namespace it created, and a ValidatingAdmissionPolicy restricts it to its own namespaces. | `charts/gateway/templates/provisioner.yaml` |
+| **CI.** Unit tests; chart policy checks (`check-manifests.py`: probes, limits, non-root, no literal Secrets); a full k3d end-to-end run; GHCR release. | `.github/workflows/ci.yml` |
 | **Tool permissions** (2): per-tool *admins only* / *hidden*, enforced in list **and** call | `services/gateway/src/catalog.ts`, `router.ts`; Servers page |
 | **Many tools** (4): search + call meta-tools, auto-used by chat above 40 tools | `services/gateway/src/mcp-endpoint.ts` (`?tools=search`) |
 | **Security hardening** (6): SSRF checks at add time *and* connect time (DNS-rebinding safe), no redirects; default-deny NetworkPolicies in every namespace; non-root, read-only rootfs, no SA tokens; upstream credentials AES-256-GCM encrypted at rest; tool-definition pinning (rug-pull detection) | `ssrf.ts`, `crypto.ts`, `charts/*/templates/networkpolicy.yaml`, `upstreams.ts` |
@@ -149,4 +187,3 @@ Dashboard → **Chat**. It uses the same gateway tools, as you: members can't tr
 | **Observability** (8): Prometheus metrics; classified unreachable reasons; per-server latency/failure stats | `metrics.ts`, `upstreams.ts` (`describeError`), Audit page |
 | **Upgrades and rollback** (9): documented and exercised | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
 
-Not attempted: the multi-store provisioning bonus, OAuth on the gateway, hosted (image-based) MCP servers.

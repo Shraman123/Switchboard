@@ -68,3 +68,21 @@ networkPolicy:
     namespace: kube-system
     podLabels:
       app.kubernetes.io/name: traefik
+
+# ResourceQuota + LimitRange for the namespace (on for provisioned stores).
+# Sized for this chart: db + web + mcp + the bootstrap job running at once.
+quota:
+  enabled: false
+  hard:
+    pods: "8"
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 3Gi
+    persistentvolumeclaims: "3"
+    requests.storage: 6Gi
+    services: "5"
+    secrets: "20" # includes Helm release history (capped at 3 by the provisioner)
+  containerDefault: { cpu: 250m, memory: 256Mi }
+  containerDefaultRequest: { cpu: 25m, memory: 64Mi }
+  containerMax: { cpu: "1", memory: 1Gi }

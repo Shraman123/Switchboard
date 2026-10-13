@@ -91,3 +91,12 @@ test("tool search ranks name matches first", () => {
   assert.ok(list > note);
   assert.equal(scoreTool("weather", "woo__list_orders", "List orders"), 0);
 });
+
+test("wildcard SSRF suffixes match exactly one DNS label", async () => {
+  const { suffixPattern } = await import("../src/ssrf.js");
+  const re = suffixPattern(".store-*.svc.cluster.local");
+  assert.ok(re.test("woo-store-mcp.store-kolkata.svc.cluster.local"));
+  assert.ok(!re.test("gateway-postgres.gateway.svc.cluster.local"));
+  assert.ok(!re.test("x.store-a.b.svc.cluster.local"), "one label only");
+  assert.ok(!re.test("store-kolkata.svc.cluster.local.evil.com"), "anchored at the end");
+});

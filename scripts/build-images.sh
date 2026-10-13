@@ -18,15 +18,17 @@ declare -A CONTEXT=(
   [everything-mcp]=images/everything-mcp
   [gateway]=services/gateway
   [dashboard]=services/dashboard
+  [provisioner]=.  # needs charts/woo-store, so the repo root is its context
 )
+declare -A DOCKERFILE=([provisioner]=services/gateway/Dockerfile.provisioner)
 
 names=("$@")
-[ ${#names[@]} -eq 0 ] && names=(woo-store woo-mcp notes-mcp everything-mcp gateway dashboard)
+[ ${#names[@]} -eq 0 ] && names=(woo-store woo-mcp notes-mcp everything-mcp gateway dashboard provisioner)
 
 for n in "${names[@]}"; do
   img="$REGISTRY/$n:$TAG"
   echo "==> $img"
-  docker build -q -t "$img" "${CONTEXT[$n]}" >/dev/null
+  docker build -q -t "$img" -f "${DOCKERFILE[$n]:-${CONTEXT[$n]}/Dockerfile}" "${CONTEXT[$n]}" >/dev/null
   docker push -q "$img" >/dev/null
 done
 echo "pushed: ${names[*]} ($TAG)"

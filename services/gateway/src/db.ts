@@ -87,6 +87,96 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (bucket, window_start)
   );
   `,
+  // 2: store provisioning + hosted (image-based) MCP servers. A server row
+  // created by the provisioner is "managed": its URL and credential belong to
+  // the platform and it is removed together with its store / deployment.
+  `
+  ALTER TABLE servers ADD COLUMN managed_by text CHECK (managed_by IN ('store', 'hosted'));
+  ALTER TABLE servers ADD COLUMN owner_id uuid REFERENCES users(id) ON DELETE SET NULL;
+
+  CREATE TABLE stores (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug text NOT NULL UNIQUE,
+    name text NOT NULL,
+    owner_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    namespace text NOT NULL UNIQUE,
+    status text NOT NULL CHECK (status IN ('provisioning', 'ready', 'failed', 'deleting')),
+    step text,
+    reason text,
+    url text,
+    server_id uuid REFERENCES servers(id) ON DELETE SET NULL,
+    attempts integer NOT NULL DEFAULT 1,
+    deadline timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    ready_at timestamptz
+  );
+
+  CREATE TABLE hosted_servers (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug text NOT NULL UNIQUE,
+    name text NOT NULL,
+    image text NOT NULL,
+    port integer NOT NULL,
+    path text NOT NULL,
+    env jsonb NOT NULL DEFAULT '{}',
+    secret_env_enc text,
+    allow_internet boolean NOT NULL DEFAULT false,
+    size text NOT NULL DEFAULT 'small' CHECK (size IN ('small', 'medium')),
+    owner_id uuid REFERENCES users(id) ON DELETE SET NULL,
+    status text NOT NULL CHECK (status IN ('provisioning', 'ready', 'failed', 'deleting')),
+    step text,
+    reason text,
+    server_id uuid REFERENCES servers(id) ON DELETE SET NULL,
+    attempts integer NOT NULL DEFAULT 1,
+    deadline timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    ready_at timestamptz
+  );
+  `,
+  // 3: OAuth 2.1 authorization server for MCP clients (browser login instead
+  // of a pasted API key). Codes and tokens are stored as SHA-256 hashes only.
+  `
+  CREATE TABLE oauth_clients (
+    client_id text PRIMARY KEY,
+    client_name text NOT NULL,
+    redirect_uris jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE oauth_codes (
+    code_hash text PRIMARY KEY,
+    client_id text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    redirect_uri text NOT NULL,
+    code_challenge text NOT NULL,
+    resource text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    used_at timestamptz
+  );
+
+  -- One row per issued token. A refresh token rotates on every use; reuse of
+  -- an old one revokes the whole family (stolen-token detection).
+  CREATE TABLE oauth_tokens (
+    token_hash text PRIMARY KEY,
+    kind text NOT NULL CHECK (kind IN ('access', 'refresh')),
+    family uuid NOT NULL,
+    client_id text NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource text NOT NULL,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    last_used_at timestamptz,
+    rotated_at timestamptz,
+    revoked_at timestamptz
+  );
+  CREATE INDEX oauth_tokens_user ON oauth_tokens (user_id, client_id);
+  CREATE INDEX oauth_tokens_family ON oauth_tokens (family);
+
+  -- Which credential made a call: the API key's name or the OAuth app's name.
+  ALTER TABLE audit_log ADD COLUMN client text;
+  `,
 ];
 
 // Runs pending migrations under an advisory lock so several replicas can

@@ -44,9 +44,16 @@ export function isPrivateAddress(ip: string): boolean {
   );
 }
 
+// A suffix may contain "*" for one DNS label, e.g. ".store-*.svc.cluster.local"
+// (the namespaces of provisioned stores).
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export const suffixPattern = (suffix: string) =>
+  new RegExp(`${suffix.toLowerCase().split("*").map(escapeRe).join("[a-z0-9-]+")}$`);
+const suffixMatchers = config.ssrf.allowedInternalSuffixes.map(suffixPattern);
+
 export function hostAllowedInternal(host: string): boolean {
   const h = host.toLowerCase().replace(/\.$/, "");
-  return config.ssrf.allowedInternalSuffixes.some((s) => h.endsWith(s.toLowerCase()));
+  return suffixMatchers.some((re) => re.test(h));
 }
 
 export class SsrfError extends Error {}

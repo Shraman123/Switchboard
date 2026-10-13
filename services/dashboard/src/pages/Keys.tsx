@@ -117,6 +117,67 @@ export function Keys({ me }: { me: Me }) {
       <div className="card">
         <KeyTable keys={keys} onRevoke={revoke} />
       </div>
+      <ConnectedApps mcpUrl={me.mcpUrl} />
     </section>
+  );
+}
+
+interface Grant {
+  client_id: string;
+  client_name: string;
+  first_authorized: string;
+  last_used: string;
+}
+
+// Apps connected with OAuth (browser login) instead of a pasted key.
+function ConnectedApps({ mcpUrl }: { mcpUrl: string }) {
+  const [grants, setGrants] = useState<Grant[]>([]);
+  const load = useCallback(() => api<Grant[]>("/oauth/grants").then(setGrants), []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const revoke = async (g: Grant) => {
+    if (!confirm(`Disconnect ${g.client_name}? Its tokens stop working immediately.`)) return;
+    await api(`/oauth/grants/${encodeURIComponent(g.client_id)}`, { method: "DELETE" });
+    load();
+  };
+  return (
+    <>
+      <h3>Connected apps (OAuth)</h3>
+      <p className="muted">
+        MCP clients that support OAuth need no key: add <code>{mcpUrl}</code> (e.g. <code>claude mcp add --transport http switchboard {mcpUrl}</code>), sign in when the browser
+        opens and approve. Access tokens last an hour and refresh on their own.
+      </p>
+      <div className="card">
+        {grants.length === 0 ? (
+          <p className="muted">No apps connected.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>App</th>
+                <th>Authorized</th>
+                <th>Last used</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {grants.map((g) => (
+                <tr key={g.client_id}>
+                  <td>{g.client_name}</td>
+                  <td>{ago(g.first_authorized)}</td>
+                  <td>{ago(g.last_used)}</td>
+                  <td>
+                    <button className="ghost danger" onClick={() => revoke(g)}>
+                      Disconnect
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </>
   );
 }

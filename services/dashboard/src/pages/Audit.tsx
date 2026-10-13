@@ -5,7 +5,8 @@ interface Entry {
   id: number;
   at: string;
   user_email: string;
-  via: "mcp" | "chat";
+  via: "mcp" | "chat" | "oauth" | "provisioner";
+  client: string | null;
   server_slug: string | null;
   tool_name: string | null;
   exposed_name: string;
@@ -21,6 +22,8 @@ interface Stat {
   p50_ms: number;
   p95_ms: number;
 }
+
+const VIA: Record<string, string> = { chat: "chat agent", mcp: "MCP client", oauth: "MCP client (OAuth)", provisioner: "platform" };
 
 export function Audit({ me }: { me: Me }) {
   const [rows, setRows] = useState<Entry[]>([]);
@@ -108,7 +111,8 @@ export function Audit({ me }: { me: Me }) {
                 <td className="nowrap">{new Date(r.at).toLocaleTimeString()}</td>
                 <td>{r.user_email}</td>
                 <td>
-                  <span className={`badge via-${r.via}`}>{r.via === "chat" ? "chat agent" : "MCP client"}</span>
+                  <span className={`badge via-${r.via}`}>{VIA[r.via] ?? r.via}</span>
+                  {r.client && <div className="muted small">{r.client}</div>}
                 </td>
                 <td>{r.server_slug ?? "—"}</td>
                 <td className="mono">{r.tool_name ?? r.exposed_name}</td>

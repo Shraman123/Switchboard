@@ -75,6 +75,7 @@ spec:
             - { name: CHAT_TIMEZONE, value: {{ .Values.llm.timezone | quote }} }
             - { name: CHAT_MAX_STEPS, value: {{ .Values.llm.maxSteps | quote }} }
             - { name: LLM_TIMEOUT_MS, value: {{ .Values.llm.timeoutMs | quote }} }
+            {{- include "gw.provisioningEnv" . | nindent 12 }}
             - name: DB_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: db-password } }
             - name: DATABASE_URL

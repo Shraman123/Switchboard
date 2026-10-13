@@ -2,6 +2,7 @@
 # Install or upgrade the whole platform with Helm.
 #   scripts/deploy.sh local          # k3d (values-local.yaml)
 #   scripts/deploy.sh prod           # VPS k3s (values-prod.yaml)
+#   LLM=ollama scripts/deploy.sh local   # chat agent on a local Ollama model
 # Extra args are passed to every `helm upgrade`, e.g. --set backend.image.tag=0.1.1
 set -euo pipefail
 cd "$(dirname "$0")/.."

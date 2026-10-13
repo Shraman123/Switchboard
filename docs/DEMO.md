@@ -1,6 +1,11 @@
-# Demo video script (~12 min)
+# Demo video script (~16 min)
 
 Two browser profiles (or one normal + one incognito window): **A = admin**, **B = member**. A terminal with `kubectl` for the Kubernetes parts. Print the credentials first with `scripts/credentials.sh`.
+
+**Before recording:**
+- Set the Groq key (`scripts/set-llm-key.sh`) so chat answers take seconds.
+- Create the two demo stores about 5 minutes ahead (Stores → *Kolkata Sweets*, *Howrah Bakery*), so section 10 doesn't wait on provisioning.
+- Place one order in each store by hand.
 
 ## 0. Architecture (1 min)
 README diagram → `docs/DESIGN.md` table. One sentence each: the store chart (WordPress + MariaDB + its own MCP server), the MCP servers chart, the gateway chart (backend = MCP client to upstreams + MCP server to members, dashboard, Postgres).
@@ -58,3 +63,43 @@ helm upgrade gateway charts/gateway -n gateway -f charts/gateway/values-local.ya
 helm history gateway -n gateway
 helm rollback gateway <previous> -n gateway --wait
 ```
+
+## 10. Bonus: multi-store provisioning (2.5 min)
+- Stores page: the two stores are *Ready*, with URL and created time. Create a third (*Salt Lake Cafe*): it shows *Provisioning* and the live step.
+- Meanwhile in the terminal:
+```bash
+kubectl get ns -l switchboard.dev/kind=store
+kubectl -n store-kolkata-sweets get deploy,sts,pvc,secret,ingress,resourcequota,limitrange,netpol
+kubectl -n store-salt-lake-cafe get pods -w        # the new store coming up
+```
+- Servers page: each store is registered automatically (*provisioned store* badge), tools `kolkata-sweets__list_orders`, `howrah-bakery__list_orders`.
+- Chat: **"Compare today's orders across kolkata-sweets and howrah-bakery."** Show both `…__list_orders` calls.
+- Isolation, from inside one store's MCP pod:
+```bash
+POD=$(kubectl -n store-kolkata-sweets get pod -l app.kubernetes.io/component=mcp -o name)
+kubectl -n store-kolkata-sweets exec $POD -- wget -qO- -T4 http://woo-store-web:8080/wp-json/ | head -c 80   # own store: works
+kubectl -n store-kolkata-sweets exec $POD -- wget -qO- -T4 http://woo-store-web.store-howrah-bakery:8080/   # other store: times out
+```
+- Delete *Howrah Bakery*. It goes *Deleting*, then disappears. `kubectl get ns store-howrah-bakery` is gone, `kubectl get pv` shows its volumes gone, and its tools are gone from the chat and the external client.
+- Recovery (optional, or describe it): create a store, `kubectl -n gateway delete pod -l app.kubernetes.io/component=provisioner` mid-install. The new provisioner resumes, clears the interrupted release and finishes, or fails after the deadline with a reason.
+- Guardrails: per-user limit (try a third store as B), quota, 15 min deadline. RBAC: `kubectl auth can-i create deployments -n kube-system --as=system:serviceaccount:gateway:gateway-provisioner` → no.
+
+## 11. Hosted MCP server from an image (1 min)
+Hosted → Deploy from image: `registry.localhost:5111/switchboard/everything-mcp:dev`, slug `ref2`, a secret env var. Show:
+- it becoming ready;
+- `kubectl -n mcp-hosted get deploy,svc,secret,netpol`;
+- the pod's securityContext (UID 10001, read-only root filesystem);
+- `ref2__echo` in the tool list.
+
+Delete it: everything is gone. Optional: deploy a nonexistent image tag and show the *Failed: ImagePullBackOff* reason.
+
+## 12. OAuth instead of an API key (1 min)
+```bash
+claude mcp add --transport http switchboard-oauth https://gateway.<domain>/mcp
+claude   # /mcp → switchboard-oauth → Authenticate → browser opens the consent screen → Allow
+```
+Then:
+- Ask "what orders came in today?".
+- The Audit log shows *MCP client (OAuth)* with the app name.
+- API keys → Connected apps → Disconnect; the next call fails.
+- Mention that `services/gateway/test/oauth-e2e.ts` proves the whole flow, including refresh-token rotation and replay detection.

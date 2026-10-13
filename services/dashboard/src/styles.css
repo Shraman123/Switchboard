@@ -61,10 +61,11 @@ button.ghost:hover { border-color: var(--muted); }
 button.danger { color: var(--bad); }
 button.link { background: none; border: 0; color: var(--accent); padding: 4px 0; font-weight: 500; }
 button.small-btn { padding: 3px 10px; margin-left: 8px; font-size: 12.5px; }
-input, select {
+input, select, textarea {
   font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; min-width: 0;
 }
-input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
+textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; resize: vertical; }
+input:focus, select:focus, textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
 label { display: flex; flex-direction: column; gap: 4px; font-weight: 500; }
 label.check { flex-direction: row; align-items: center; gap: 6px; font-weight: 400; white-space: nowrap; }
 

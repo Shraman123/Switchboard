@@ -42,6 +42,8 @@ export interface ServerRow {
   last_ok_at: string | null;
   tools: ToolDef[];
   approved_tools: Record<string, string> | null;
+  managed_by: "store" | "hosted" | null;
+  owner_id: string | null;
   updated_at: string;
 }
 

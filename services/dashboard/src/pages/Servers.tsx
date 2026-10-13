@@ -69,6 +69,7 @@ export function Servers({ me }: { me: Me }) {
                   <b>{s.name}</b>
                   <code className="slug">{s.slug}__*</code>
                   <span className={`badge ${s.status}`}>{STATUS_LABEL[s.status] ?? s.status}</span>
+                  {s.managedBy && <span className="badge">{s.managedBy === "store" ? "provisioned store" : "hosted"}</span>}
                 </div>
                 <div className="muted small">
                   {admin && s.url && <span className="mono">{s.url}</span>}
@@ -87,18 +88,22 @@ export function Servers({ me }: { me: Me }) {
                   <button className="ghost" onClick={() => act(() => api(`/servers/${s.id}/refresh`, { method: "POST" }))}>
                     Check now
                   </button>
-                  <button className="ghost" onClick={() => setEditing(s)}>
-                    Edit
-                  </button>
+                  {!s.managedBy && (
+                    <button className="ghost" onClick={() => setEditing(s)}>
+                      Edit
+                    </button>
+                  )}
                   <button className="ghost" onClick={() => act(() => api(`/servers/${s.id}`, { method: "PATCH", body: { enabled: !s.enabled } }))}>
                     {s.enabled ? "Disable" : "Enable"}
                   </button>
-                  <button
-                    className="ghost danger"
-                    onClick={() => confirm(`Remove ${s.name}? Its tools disappear for everyone.`) && act(() => api(`/servers/${s.id}`, { method: "DELETE" }))}
-                  >
-                    Remove
-                  </button>
+                  {!s.managedBy && (
+                    <button
+                      className="ghost danger"
+                      onClick={() => confirm(`Remove ${s.name}? Its tools disappear for everyone.`) && act(() => api(`/servers/${s.id}`, { method: "DELETE" }))}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
               )}
             </div>

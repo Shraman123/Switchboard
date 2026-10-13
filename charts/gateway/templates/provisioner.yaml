@@ -1,0 +1,271 @@
+{{- if .Values.provisioner.enabled }}
+{{- $sa := printf "%s-provisioner" .Release.Name }}
+{{- $tenant := printf "%s-%s-tenant" .Release.Name .Release.Namespace }}
+{{- $cluster := printf "%s-%s-provisioner" .Release.Name .Release.Namespace }}
+# ---------------------------------------------------------------------------
+# Provisioner: the only Switchboard component with Kubernetes API rights.
+# The gateway pods keep automountServiceAccountToken: false.
+#
+# Least privilege, in three layers:
+#  1. Cluster-wide it may only manage Namespaces and RoleBindings, and may bind
+#     exactly one ClusterRole (the tenant role) without holding it itself.
+#  2. Everything else (Deployments, Secrets, PVCs, ...) it gets per namespace,
+#     through a RoleBinding to the tenant role in each store namespace it made
+#     (and in the hosted-servers namespace).
+#  3. A ValidatingAdmissionPolicy pins (1) down: it can only create or delete
+#     namespaces named <prefix>* that carry the managed label, and only write
+#     RoleBindings inside managed namespaces. It cannot touch kube-system,
+#     the gateway namespace, or anything it did not create.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list, watch, create, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, create, patch, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [{{ $tenant }}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cluster }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+---
+# What a store's Helm release (and a hosted server) needs, granted per
+# namespace only. No pods/exec, no cluster-scoped resources, no RBAC writes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $tenant }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets, configmaps, services, persistentvolumeclaims, serviceaccounts, resourcequotas, limitranges]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods, pods/log, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates]
+    verbs: [get, list, watch]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        resources: [namespaces]
+        operations: [CREATE, UPDATE, DELETE]
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: ["*"]
+        resources: [rolebindings]
+        operations: [CREATE, UPDATE, DELETE]
+  matchConditions:
+    - name: only-the-provisioner
+      expression: request.userInfo.username == "system:serviceaccount:{{ .Release.Namespace }}:{{ $sa }}"
+  validations:
+    - expression: >-
+        request.resource.resource != "namespaces" ||
+        (request.name.startsWith("{{ .Values.provisioner.storeNamespacePrefix }}") &&
+         (request.operation == "DELETE" ? oldObject : object).metadata.?labels["switchboard.dev/managed"].orValue("") == "true")
+      message: the provisioner may only manage namespaces named {{ .Values.provisioner.storeNamespacePrefix }}* with the switchboard.dev/managed label
+    - expression: >-
+        request.resource.resource != "rolebindings" ||
+        (namespaceObject != null && namespaceObject.metadata.?labels["switchboard.dev/managed"].orValue("") == "true")
+      message: the provisioner may only write RoleBindings in namespaces it manages
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $cluster }}
+  validationActions: [Deny]
+---
+# Values a provisioned store is installed with (the same woo-store chart as
+# the main store: images, storage class, ingress class/TLS for this environment).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-provisioner
+  labels: {{- include "gw.labels" . | nindent 4 }}
+data:
+  store-values.yaml: |
+    {{- toYaml .Values.provisioner.storeValues | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-provisioner
+  labels: {{- include "gw.labels" . | nindent 4 }}
+    app.kubernetes.io/component: provisioner
+spec:
+  # One active reconciler (it also takes a Postgres advisory lock).
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: provisioner
+  template:
+    metadata:
+      labels: {{- include "gw.labels" . | nindent 8 }}
+        app.kubernetes.io/component: provisioner
+      annotations:
+        checksum/store-values: {{ .Values.provisioner.storeValues | toJson | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: {{ $sa }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: provisioner
+          image: "{{ .Values.provisioner.image.repository }}:{{ .Values.provisioner.image.tag }}"
+          imagePullPolicy: {{ .Values.provisioner.image.pullPolicy }}
+          securityContext: {{- include "gw.containerSecurity" . | nindent 12 }}
+          ports:
+            - { name: health, containerPort: 8081 }
+          env:
+            {{- include "gw.provisioningEnv" . | nindent 12 }}
+            - { name: STORE_CHART, value: /opt/charts/woo-store }
+            - { name: STORE_VALUES_FILE, value: /config/store-values.yaml }
+            - { name: PROVISIONER_SERVICE_ACCOUNT, value: {{ $sa }} }
+            - { name: PROVISIONER_NAMESPACE, value: {{ .Release.Namespace }} }
+            - { name: TENANT_CLUSTER_ROLE, value: {{ $tenant }} }
+            - { name: PROVISIONER_CONCURRENCY, value: {{ .Values.provisioner.concurrency | quote }} }
+            - { name: DEFAULT_CALL_TIMEOUT_MS, value: {{ .Values.backend.defaultCallTimeoutMs | quote }} }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: db-password } }
+            - name: DATABASE_URL
+              value: postgres://switchboard:$(DB_PASSWORD)@{{ .Release.Name }}-postgres:5432/switchboard
+            # To encrypt each new store's MCP token before it is stored.
+            - name: ENCRYPTION_KEY
+              valueFrom: { secretKeyRef: { name: {{ .Values.secretName }}, key: encryption-key } }
+          startupProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources: {{- toYaml .Values.provisioner.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 128Mi }
+        - name: config
+          configMap: { name: {{ .Release.Name }}-provisioner }
+---
+# Namespace for hosted (image-based) MCP servers, with its own guardrails.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.provisioner.hostedNamespace }}
+  labels:
+    switchboard.dev/managed: "true"
+    switchboard.dev/kind: hosted
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    helm.sh/resource-policy: keep
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: switchboard-provisioner
+  namespace: {{ .Values.provisioner.hostedNamespace }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $tenant }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: hosted-quota
+  namespace: {{ .Values.provisioner.hostedNamespace }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  hard: {{- toYaml .Values.provisioner.hostedQuota | nindent 4 }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: hosted-limits
+  namespace: {{ .Values.provisioner.hostedNamespace }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  limits:
+    - type: Container
+      default: { cpu: 250m, memory: 256Mi }
+      defaultRequest: { cpu: 25m, memory: 64Mi }
+      max: { cpu: 500m, memory: 512Mi }
+---
+# Default deny in the hosted namespace; each hosted server gets its own
+# allow-from-gateway policy from the provisioner.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ .Values.provisioner.hostedNamespace }}
+  labels: {{- include "gw.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+{{- end }}

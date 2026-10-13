@@ -1,4 +1,5 @@
-# One host: the SPA at /, its API at /api, the team MCP endpoint at /mcp.
+# One host: the SPA at /, its API at /api, the team MCP endpoint at /mcp,
+# OAuth at /oauth and /.well-known.
 # /metrics, /healthz and /readyz are deliberately not routed (internal only).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -25,6 +26,13 @@ spec:
           # Prefix, not Exact: Traefik ranks rules by length, and an Exact /mcp
           # rule would lose to the catch-all PathPrefix(/) of the SPA.
           - path: /mcp
+            pathType: Prefix
+            backend: { service: { name: {{ .Release.Name }}-backend, port: { name: http } } }
+          # OAuth for MCP clients: authorization server endpoints + RFC 8414 / 9728 discovery.
+          - path: /oauth
+            pathType: Prefix
+            backend: { service: { name: {{ .Release.Name }}-backend, port: { name: http } } }
+          - path: /.well-known
             pathType: Prefix
             backend: { service: { name: {{ .Release.Name }}-backend, port: { name: http } } }
           - path: /

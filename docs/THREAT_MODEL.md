@@ -58,8 +58,30 @@ Network side: a compromised upstream pod in `mcp-servers` can only resolve DNS. 
 
 An **admin** is fully trusted inside the system: they can register servers, see all audit data and issue keys for any user. They still can't read upstream credentials back or see members' plaintext keys.
 
+## 5. The provisioner: the one component with cluster rights
+
+| If… | Then |
+|---|---|
+| The gateway is compromised (RCE) | It still has **no** Kubernetes credentials (no token mounted). It can write a `stores` row, which only asks the provisioner to install *the fixed woo-store chart* with values it validates. It cannot choose the chart or set arbitrary Helm values. Store name and id are passed with `--set-string`, escaped, and the id is regex-checked. |
+| The provisioner is compromised | It can create and delete `store-*` namespaces that carry the managed label, and act inside those and `mcp-hosted`. RBAC plus the admission policy stop it at `kube-system`, `gateway` and the main `store` namespace. It can read the gateway DB and encryption key, so it is as sensitive as the gateway. |
+| A member creates stores to exhaust the cluster | Per-user limit (2), global limit (4), ResourceQuota and LimitRange per store namespace, and a provisioning deadline. |
+| A member deletes someone else's store | Only the owner or an admin can delete or retry a store; others get a 404, so they can't even confirm it exists. |
+| A store owner abuses its MCP tools | They manage only their own store's write tools: ownership is per server, not a platform role. |
+| A hosted server is malicious | It is an untrusted upstream, like one added by URL (section 3). It also runs as UID 10001 with a read-only root filesystem, no capabilities, no service-account token and no service links. Ingress comes only from the gateway; egress is none, or public-internet only, never private ranges or metadata. Images must come from allowlisted registries. Its tools still go through tool pinning. |
+
+## 6. OAuth-specific threats
+
+| Threat | Mitigation |
+|---|---|
+| Stolen authorization code | PKCE S256 is mandatory; codes are single-use, last 60 s, and are bound to the client and redirect URI. |
+| Open redirect / code sent to an attacker | Codes are only ever redirected to a URI the client registered; an unknown client or URI gets an error page, never a redirect. `javascript:`, `data:` and `file:` URIs are refused at registration. |
+| Consent phishing (a malicious app named "Claude Code") | The consent screen shows the user and the redirect host. Approval needs a signed-in session, and the decision is a CSRF-protected POST. |
+| Token replay at another resource | Tokens are audience-bound to this gateway's `/mcp`; others are rejected. |
+| Refresh-token theft | Rotation on every use; reuse of an old one revokes the grant. Users can disconnect apps. |
+| Registration spam | Open DCR is capped, and never-used clients are pruned. |
+
 ## Out of scope / next steps
 
 - TLS between pods (a service mesh or mTLS). Today the in-cluster hops are HTTP, protected by NetworkPolicy and per-hop auth.
 - An external KMS for the credential encryption key (it's a Kubernetes Secret now; enable etcd encryption at rest on the VPS).
-- OAuth 2.1 on the gateway for browser login in MCP clients (API keys today).
+- Client ID Metadata Documents (the newer alternative to dynamic registration) and an external IdP (OIDC) behind the gateway's authorization server.

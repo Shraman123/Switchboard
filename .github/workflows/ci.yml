@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Type-check, build and unit-test every TypeScript service.
+  services:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [gateway, woo-mcp, notes-mcp, dashboard]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Unit tests
+        if: matrix.service == 'gateway' || matrix.service == 'woo-mcp'
+        run: npm test
+
+  # Lint and render every chart with every values file, then enforce the
+  # platform's rules (probes, requests/limits, non-root, no literal Secrets).
+  charts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: pip install pyyaml==6.0.2
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: Lint, render, validate, policy-check
+        run: |
+          set -euo pipefail
+          for chart in woo-store mcp-servers gateway; do
+            for env in local prod; do
+              echo "::group::$chart / $env"
+              helm lint "charts/$chart" -f "charts/$chart/values-$env.yaml"
+              helm template ci "charts/$chart" -f "charts/$chart/values-$env.yaml" > /tmp/out.yaml
+              kubeconform -strict -summary -kubernetes-version 1.33.0 /tmp/out.yaml
+              python scripts/check-manifests.py < /tmp/out.yaml
+              echo "::endgroup::"
+            done
+          done
+
+  # Full platform on k3d inside the runner, then the end-to-end smoke test
+  # (the "definition of done" checks, through the real Ingress).
+  e2e:
+    needs: [services, charts]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install k3d
+        run: curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/v5.8.3/install.sh | TAG=v5.8.3 bash
+      - name: Cluster, images, secrets, Helm installs
+        run: scripts/up-local.sh
+      - name: Smoke test
+        run: scripts/smoke-test.sh
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide
+          kubectl get events -A --sort-by=.lastTimestamp | tail -60
+          for ns in gateway store mcp-servers switchboard-system; do
+            kubectl -n $ns logs -l app.kubernetes.io/part-of=switchboard --all-containers --tail=80 --prefix || true
+          done
+
+  # Release images to GHCR from main (used by the VPS values file).
+  images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [e2e]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          REGISTRY=ghcr.io/$OWNER/switchboard TAG=sha-${GITHUB_SHA::7} scripts/build-images.sh
+          REGISTRY=ghcr.io/$OWNER/switchboard TAG=latest scripts/build-images.sh

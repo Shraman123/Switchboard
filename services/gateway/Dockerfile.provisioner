@@ -1,0 +1,31 @@
+# Provisioner image: the gateway's code (shared DB/crypto modules) plus a
+# pinned, checksum-verified helm binary and the woo-store chart it installs.
+# Build context: the repository root (it needs charts/woo-store).
+FROM node:22.20-alpine AS build
+WORKDIR /app
+COPY services/gateway/package.json services/gateway/package-lock.json ./
+RUN npm ci
+COPY services/gateway/tsconfig.json ./
+COPY services/gateway/src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM alpine:3.22 AS helm
+ARG TARGETARCH=amd64
+ARG HELM_VERSION=v3.17.3
+ARG HELM_SHA256_amd64=ee88b3c851ae6466a3de507f7be73fe94d54cbf2987cbaa3d1a3832ea331f2cd
+ARG HELM_SHA256_arm64=7944e3defd386c76fd92d9e6fec5c2d65a323f6fadc19bfb5e704e3eee10348e
+RUN wget -q -O /helm.tgz https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz \
+ && eval "echo \"\$HELM_SHA256_${TARGETARCH}  /helm.tgz\"" | sha256sum -c - \
+ && tar xzf /helm.tgz -C / && mv /linux-${TARGETARCH}/helm /helm
+
+FROM node:22.20-alpine
+ENV NODE_ENV=production \
+    HELM_CACHE_HOME=/tmp/helm/cache HELM_CONFIG_HOME=/tmp/helm/config HELM_DATA_HOME=/tmp/helm/data
+WORKDIR /app
+COPY --from=helm /helm /usr/local/bin/helm
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY services/gateway/package.json ./
+COPY charts/woo-store /opt/charts/woo-store
+USER 1000:1000
+CMD ["node", "dist/provisioner/main.js"]

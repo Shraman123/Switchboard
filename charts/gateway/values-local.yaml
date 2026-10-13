@@ -4,18 +4,18 @@ backend:
 dashboard:
   image: { repository: registry.localhost:5111/switchboard/dashboard, tag: dev, pullPolicy: Always }
 
-# Chat agent on a local model: Ollama on the host machine (the brief allows a
-# local model). Docker Desktop forwards 192.168.65.254 (host.docker.internal)
-# to the host's loopback, so Ollama needs no extra configuration.
-#   ollama pull qwen2.5:3b
-# To use Groq instead, delete this block and put a key in gateway-secrets/llm-api-key.
-llm:
-  baseUrl: http://192.168.65.254:11434/v1
-  model: qwen2.5:3b
-  timeoutMs: 300000 # a 3B model on a laptop GPU needs time per step
-networkPolicy:
-  extraEgress:
-    - to:
-        - ipBlock: { cidr: 192.168.65.254/32 }
-      ports:
-        - { protocol: TCP, port: 11434 }
+# Chat agent: Groq (values.yaml default) with the key from
+# gateway-secrets/llm-api-key (scripts/set-llm-key.sh). For a fully offline
+# local model instead, deploy with LLM=ollama (adds values-ollama.yaml).
+
+# Store provisioning + hosted MCP servers. Each store gets
+# http://<id>-store.localtest.me (localtest.me is wildcard DNS for 127.0.0.1).
+provisioner:
+  enabled: true
+  image: { repository: registry.localhost:5111/switchboard/provisioner, tag: dev, pullPolicy: Always }
+  storeUrlTemplate: "http://{slug}-store.localtest.me"
+  storeValues:
+    image: { repository: registry.localhost:5111/switchboard/woo-store, tag: dev, pullPolicy: IfNotPresent }
+    mcp:
+      image: { repository: registry.localhost:5111/switchboard/woo-mcp, tag: dev, pullPolicy: IfNotPresent }
+  hostedImagePrefixes: [registry.localhost:5111/, ghcr.io/, docker.io/]

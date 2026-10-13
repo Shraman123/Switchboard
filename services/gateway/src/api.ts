@@ -7,6 +7,7 @@ import { chatConfigured, runChat } from "./chat.js";
 import { config } from "./config.js";
 import { encrypt, hashPassword, newApiKey, randomToken, sha256, verifyPassword } from "./crypto.js";
 import { one, q } from "./db.js";
+import { platform } from "./api-platform.js";
 import { SsrfError, validateUpstreamUrl } from "./ssrf.js";
 import { toolFingerprint, upstreams, type ServerRow } from "./upstreams.js";
 
@@ -69,8 +70,10 @@ api.post("/auth/accept-invite", async (req, res) => {
 api.use(requireUser);
 
 api.get("/me", (req, res) => {
-  res.json({ ...req.user, chatEnabled: chatConfigured(), mcpUrl: `${config.publicUrl}/mcp` });
+  res.json({ ...req.user, chatEnabled: chatConfigured(), provisioningEnabled: config.provisioning.enabled, mcpUrl: `${config.publicUrl}/mcp` });
 });
+
+api.use(platform);
 
 // ---------------------------------------------------------------- servers
 
@@ -83,6 +86,7 @@ const publicServer = (s: ServerRow, catalog: Awaited<ReturnType<typeof fullCatal
   authHeaderName: s.auth_header_name,
   hasCredential: Boolean(s.credential_enc), // the value itself never leaves the server
   enabled: s.enabled,
+  managedBy: s.managed_by, // 'store' / 'hosted': lifecycle owned by the platform
   timeoutMs: s.timeout_ms,
   status: s.enabled ? s.status : "disabled",
   statusReason: s.status_reason,
@@ -161,6 +165,14 @@ api.patch("/servers/:id", requireAdmin, async (req, res) => {
     res.status(404).json({ error: "no such server" });
     return;
   }
+  if (cur.managed_by) {
+    // Platform-managed: only enable/disable, rename and timeout are editable.
+    const extra = Object.keys(b).filter((k) => !["enabled", "name", "timeoutMs"].includes(k));
+    if (extra.length) {
+      res.status(409).json({ error: `this server is managed by its ${cur.managed_by}; ${extra.join(", ")} cannot be changed here` });
+      return;
+    }
+  }
   if (b.url && b.url !== cur.url && !(await checkUrl(b.url, res))) return;
   const authType = b.authType ?? cur.auth_type;
   let credential = cur.credential_enc;
@@ -188,6 +200,11 @@ api.patch("/servers/:id", requireAdmin, async (req, res) => {
 });
 
 api.delete("/servers/:id", requireAdmin, async (req, res) => {
+  const cur = await upstreams.byId(String(req.params.id));
+  if (cur?.managed_by) {
+    res.status(409).json({ error: `this server belongs to a ${cur.managed_by === "store" ? "provisioned store" : "hosted deployment"}; delete that instead` });
+    return;
+  }
   await q("DELETE FROM servers WHERE id=$1", [req.params.id]);
   upstreams.drop(String(req.params.id));
   upstreams.invalidate();
@@ -327,7 +344,7 @@ api.get("/audit", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 200), 1000);
   res.json(
     await q(
-      `SELECT id, at, user_email, via, server_slug, tool_name, exposed_name, duration_ms, outcome, error
+      `SELECT id, at, user_email, via, client, server_slug, tool_name, exposed_name, duration_ms, outcome, error
          FROM audit_log
         WHERE ($1 OR user_id=$2)
           AND ($3::text IS NULL OR user_email=$3)

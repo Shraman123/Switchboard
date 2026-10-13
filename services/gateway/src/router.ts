@@ -21,9 +21,9 @@ async function audit(p: Principal, entry: { serverId?: string; slug?: string; to
   metrics.toolCalls.inc({ server: entry.slug ?? "-", tool: entry.tool ?? entry.exposed, outcome: entry.outcome, via: p.via });
   metrics.toolLatency.observe({ server: entry.slug ?? "-", outcome: entry.outcome }, entry.ms / 1000);
   await q(
-    `INSERT INTO audit_log (user_id, user_email, via, api_key_id, server_id, server_slug, tool_name, exposed_name, duration_ms, outcome, error)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [p.userId, p.email, p.via, p.apiKeyId ?? null, entry.serverId ?? null, entry.slug ?? null, entry.tool ?? null, entry.exposed, entry.ms, entry.outcome, entry.error?.slice(0, 500) ?? null],
+    `INSERT INTO audit_log (user_id, user_email, via, api_key_id, client, server_id, server_slug, tool_name, exposed_name, duration_ms, outcome, error)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [p.userId, p.email, p.via, p.apiKeyId ?? null, p.client ?? null, entry.serverId ?? null, entry.slug ?? null, entry.tool ?? null, entry.exposed, entry.ms, entry.outcome, entry.error?.slice(0, 500) ?? null],
   ).catch((err) => console.error("audit write failed", err));
 }
 

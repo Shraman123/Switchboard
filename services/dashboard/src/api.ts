@@ -29,6 +29,7 @@ export interface Me {
   name: string;
   role: "admin" | "member";
   chatEnabled: boolean;
+  provisioningEnabled: boolean;
   mcpUrl: string;
 }
 
@@ -52,6 +53,7 @@ export interface Server {
   authHeaderName: string | null;
   hasCredential: boolean;
   enabled: boolean;
+  managedBy: "store" | "hosted" | null;
   timeoutMs: number;
   status: "connected" | "unreachable" | "disabled" | "unknown";
   statusReason: string | null;

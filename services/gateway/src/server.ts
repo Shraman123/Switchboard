@@ -4,10 +4,13 @@ import { api } from "./api.js";
 import { requireMcpPrincipal } from "./auth.js";
 import { config } from "./config.js";
 import { migrate, pool } from "./db.js";
+import { oauthApi, oauthPublic } from "./oauth.js";
 import { handleMcp } from "./mcp-endpoint.js";
 import { registry } from "./metrics.js";
 import { seed } from "./seed.js";
 import { upstreams } from "./upstreams.js";
+
+if (!config.sessionSecret) throw new Error("missing required env SESSION_SECRET");
 
 // Wait for Postgres instead of crash-looping while it starts.
 for (let i = 1; ; i++) {
@@ -46,7 +49,10 @@ app.get("/metrics", async (_req, res) => {
   res.set("content-type", registry.contentType).send(await registry.metrics());
 });
 
-// --- the team MCP endpoint (API key or chat token required)
+// --- OAuth for MCP clients: discovery, registration, authorize, token, revoke
+app.use(oauthPublic);
+
+// --- the team MCP endpoint (API key, OAuth access token or chat token required)
 app.post("/mcp", requireMcpPrincipal, handleMcp);
 const notAllowed = (_req: express.Request, res: express.Response) => {
   // Stateless server: no standalone SSE stream and no sessions to delete.
@@ -65,6 +71,7 @@ app.use("/api", (req, res, next) => {
   }
   next();
 });
+app.use("/api", oauthApi);
 app.use("/api", api);
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

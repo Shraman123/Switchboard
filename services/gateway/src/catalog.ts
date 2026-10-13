@@ -15,8 +15,9 @@ export interface Principal {
   userId: string;
   email: string;
   role: "admin" | "member";
-  via: "mcp" | "chat";
+  via: "mcp" | "chat" | "oauth";
   apiKeyId?: string;
+  client?: string; // API key name or OAuth app name, for the audit log
 }
 
 export interface Policy {
@@ -72,7 +73,8 @@ export function denialFor(e: CatalogEntry, p: Principal): Denial | null {
   if (e.server.status !== "connected") return "server_unreachable";
   if (e.policy.hidden) return "hidden";
   if (e.pendingReview) return "pending_review";
-  if (e.policy.admin_only && p.role !== "admin") return "admin_only";
+  // A store's owner manages their own store's tools (e.g. create_product).
+  if (e.policy.admin_only && p.role !== "admin" && e.server.owner_id !== p.userId) return "admin_only";
   return null;
 }
 
@@ -80,7 +82,7 @@ export const denialMessage: Record<Denial, string> = {
   server_disabled: "this tool's server is disabled by an admin",
   server_unreachable: "this tool's server is currently unreachable",
   hidden: "this tool is hidden by an admin",
-  admin_only: "this tool is restricted to admins",
+  admin_only: "this tool is restricted to admins (and the store's owner)",
   pending_review: "this tool's definition changed upstream and is waiting for admin review",
 };
 

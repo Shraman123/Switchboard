@@ -13,7 +13,8 @@ const list = (name: string) =>
 export const config = {
   port: Number(opt("PORT", "8080")),
   databaseUrl: req("DATABASE_URL"),
-  sessionSecret: req("SESSION_SECRET"),
+  // Required by the gateway (checked in server.ts); the provisioner has no use for it.
+  sessionSecret: process.env.SESSION_SECRET ?? "",
   encryptionKey: req("ENCRYPTION_KEY"),
   // Public URL of the dashboard / gateway, shown to users for MCP client setup.
   publicUrl: opt("PUBLIC_URL", "http://gateway.localtest.me").replace(/\/$/, ""),
@@ -43,6 +44,30 @@ export const config = {
     maxSteps: Number(opt("CHAT_MAX_STEPS", "8")),
     timeoutMs: Number(opt("LLM_TIMEOUT_MS", "120000")),
     timezone: opt("CHAT_TIMEZONE", "Asia/Kolkata"),
+  },
+
+  // Store provisioning + hosted MCP servers (bonus). The gateway API only
+  // records desired state; the separate provisioner Deployment acts on it.
+  provisioning: {
+    enabled: opt("PROVISIONING_ENABLED", "false") === "true",
+    storeUrlTemplate: opt("STORE_URL_TEMPLATE", "http://{slug}-store.localtest.me"),
+    storeNamespacePrefix: opt("STORE_NAMESPACE_PREFIX", "store-"),
+    storeChart: opt("STORE_CHART", "/opt/charts/woo-store"),
+    storeValuesFile: opt("STORE_VALUES_FILE", "/config/store-values.yaml"),
+    storeTimeoutMs: Number(opt("STORE_TIMEOUT_MS", "900000")),
+    maxStoresPerUser: Number(opt("MAX_STORES_PER_USER", "2")),
+    maxStoresTotal: Number(opt("MAX_STORES_TOTAL", "4")),
+    hostedNamespace: opt("HOSTED_NAMESPACE", "mcp-hosted"),
+    hostedImagePrefixes: list("HOSTED_IMAGE_PREFIXES"),
+    hostedTimeoutMs: Number(opt("HOSTED_TIMEOUT_MS", "300000")),
+    maxHosted: Number(opt("MAX_HOSTED_SERVERS", "5")),
+    concurrency: Number(opt("PROVISIONER_CONCURRENCY", "3")),
+    // Who the per-store RoleBinding grants access to (the provisioner itself).
+    serviceAccount: opt("PROVISIONER_SERVICE_ACCOUNT", "gateway-provisioner"),
+    serviceAccountNamespace: opt("PROVISIONER_NAMESPACE", "gateway"),
+    tenantClusterRole: opt("TENANT_CLUSTER_ROLE", "switchboard-tenant"),
+    // Where the gateway pods run (store/hosted NetworkPolicies admit only them).
+    gatewayNamespace: opt("GATEWAY_NAMESPACE", "gateway"),
   },
 
   // JSON list of upstreams registered on first boot (see seed.ts).

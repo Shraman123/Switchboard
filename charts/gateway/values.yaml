@@ -44,11 +44,13 @@ llm:
   timeoutMs: 120000
 
 # SSRF: hostnames under these suffixes may resolve to cluster-internal IPs.
-# Everything else must resolve to a public address.
+# Everything else must resolve to a public address. "*" matches one DNS label.
 ssrf:
   allowedInternalSuffixes:
     - .store.svc.cluster.local
     - .mcp-servers.svc.cluster.local
+    - .store-*.svc.cluster.local   # provisioned stores
+    - .mcp-hosted.svc.cluster.local # hosted MCP servers
   allowHttp: true
 
 # Registered on first boot only (later changes happen in the dashboard).
@@ -85,6 +87,41 @@ seedServers:
       gzip-file-as-resource: { hidden: true }
       simulate-research-query: { hidden: true }
 
+# Store provisioning + hosted MCP servers (bonus). Off by default.
+provisioner:
+  enabled: false
+  image: { repository: switchboard/provisioner, tag: dev, pullPolicy: IfNotPresent }
+  resources:
+    requests: { cpu: 25m, memory: 96Mi }
+    limits: { cpu: 500m, memory: 256Mi }
+  concurrency: 3
+  storeNamespacePrefix: store-
+  # Public URL of a provisioned store; {slug} is the store's id.
+  storeUrlTemplate: "http://{slug}-store.localtest.me"
+  storeTimeoutMs: 900000
+  maxStoresPerUser: 2
+  maxStoresTotal: 4
+  # woo-store chart values for every provisioned store (merged with what the
+  # provisioner sets itself: siteUrl, title, quota.enabled).
+  storeValues: {}
+  hostedNamespace: mcp-hosted
+  # Hosted servers may only use images from these prefixes (empty = any).
+  hostedImagePrefixes: []
+  hostedTimeoutMs: 300000
+  maxHostedServers: 5
+  hostedQuota:
+    pods: "10"
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "3"
+    limits.memory: 3Gi
+  # The Kubernetes API server, for the provisioner's egress NetworkPolicy.
+  # k3s serves it on the node IP, port 6443 (kubernetes.default:443 is DNAT'd).
+  apiServerEgress:
+    - ports:
+        - { protocol: TCP, port: 6443 }
+        - { protocol: TCP, port: 443 }
+
 ingress:
   className: traefik
   annotations: {}
@@ -98,7 +135,8 @@ networkPolicy:
     namespace: kube-system
     podLabels:
       app.kubernetes.io/name: traefik
-  # Namespaces whose MCP servers the gateway may reach (port 8080).
+  # Namespaces whose MCP servers the gateway may reach (port 8080), plus any
+  # namespace labelled switchboard.dev/upstream=true (provisioned stores).
   upstreamNamespaces: [store, mcp-servers]
   # Internet egress for external MCP servers and the LLM API, minus every
   # private / link-local range (blocks cloud metadata at the network layer).

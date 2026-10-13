@@ -1,0 +1,15 @@
+# Overlay: chat agent on a local model (Ollama on the host machine; the brief
+# allows a local model). Docker Desktop forwards 192.168.65.254
+# (host.docker.internal) to the host's loopback.
+#   ollama pull qwen2.5:3b
+#   LLM=ollama scripts/deploy.sh local
+llm:
+  baseUrl: http://192.168.65.254:11434/v1
+  model: qwen2.5:3b
+  timeoutMs: 300000 # a 3B model on a laptop GPU needs time per step
+networkPolicy:
+  extraEgress:
+    - to:
+        - ipBlock: { cidr: 192.168.65.254/32 }
+      ports:
+        - { protocol: TCP, port: 11434 }
