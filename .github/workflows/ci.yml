@@ -83,8 +83,16 @@ jobs:
         run: curl -sSL https://raw.githubusercontent.com/k3d-io/k3d/v5.8.3/install.sh | TAG=v5.8.3 bash
       - name: Cluster, images, secrets, Helm installs
         run: scripts/up-local.sh
-      - name: Smoke test
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install gateway deps (OAuth e2e uses the MCP SDK client)
+        run: npm ci
+        working-directory: services/gateway
+      - name: Smoke test (definition of done)
         run: scripts/smoke-test.sh
+      - name: Platform smoke test (stores, isolation, hosted servers, OAuth)
+        run: scripts/smoke-test-platform.sh
       - name: Diagnostics on failure
         if: failure()
         run: |

@@ -1,11 +1,11 @@
 # VPS (k3s). Only these values differ from local; templates are identical.
 publicUrl: https://gateway.example.com      # MCP clients use https://gateway.example.com/mcp
 backend:
-  image: { repository: ghcr.io/YOUR_GH_USER/switchboard/gateway, tag: "0.1.0", pullPolicy: IfNotPresent }
+  image: { repository: ghcr.io/shraman123/switchboard/gateway, tag: "0.2.0", pullPolicy: IfNotPresent }
   replicas: 2
   cookieSecure: true                         # session cookie only over HTTPS
 dashboard:
-  image: { repository: ghcr.io/YOUR_GH_USER/switchboard/dashboard, tag: "0.1.0", pullPolicy: IfNotPresent }
+  image: { repository: ghcr.io/shraman123/switchboard/dashboard, tag: "0.2.0", pullPolicy: IfNotPresent }
 postgres:
   storage: 5Gi
 storageClass: local-path
@@ -14,9 +14,32 @@ ssrf:
   allowedInternalSuffixes:                   # in-cluster upstreams stay reachable over http
     - .store.svc.cluster.local
     - .mcp-servers.svc.cluster.local
+    - .store-*.svc.cluster.local     # provisioned stores
+    - .mcp-hosted.svc.cluster.local  # hosted MCP servers
 ingress:
   className: traefik
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
   tls:
     enabled: true
+provisioner:
+  enabled: true
+  image: { repository: ghcr.io/shraman123/switchboard/provisioner, tag: "0.2.0", pullPolicy: IfNotPresent }
+  # Every store gets its own host under the store domain (wildcard DNS or one
+  # A record per store) and its own Let's Encrypt certificate.
+  storeUrlTemplate: "https://{slug}.store.example.com"
+  maxStoresTotal: 4
+  storeValues:
+    image: { repository: ghcr.io/shraman123/switchboard/woo-store, tag: "0.2.0", pullPolicy: IfNotPresent }
+    mcp:
+      image: { repository: ghcr.io/shraman123/switchboard/woo-mcp, tag: "0.2.0", pullPolicy: IfNotPresent }
+    storageClass: local-path
+    db: { storage: 2Gi }
+    web: { storage: 2Gi }
+    ingress:
+      className: traefik
+      annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+      tls:
+        enabled: true
+  hostedImagePrefixes: [ghcr.io/shraman123/, ghcr.io/modelcontextprotocol/]

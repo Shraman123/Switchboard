@@ -2,13 +2,13 @@
 siteUrl: https://store.example.com          # <- your domain (DNS A record -> VPS IP)
 adminEmail: ops@example.com
 image:
-  repository: ghcr.io/YOUR_GH_USER/switchboard/woo-store
-  tag: "0.1.0"                               # immutable tags in prod; upgrade = new tag
+  repository: ghcr.io/shraman123/switchboard/woo-store
+  tag: "0.2.0"                               # immutable tags in prod; upgrade = new tag
   pullPolicy: IfNotPresent
 mcp:
   image:
-    repository: ghcr.io/YOUR_GH_USER/switchboard/woo-mcp
-    tag: "0.1.0"
+    repository: ghcr.io/shraman123/switchboard/woo-mcp
+    tag: "0.2.0"
     pullPolicy: IfNotPresent
 db:
   storage: 10Gi
