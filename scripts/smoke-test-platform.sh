@@ -62,11 +62,13 @@ for s in "$A" "$B"; do
   ns="store-$s"
   check "$s: namespace, 2 PVCs, Secret, Ingress" "[ \$(kubectl -n $ns get pvc --no-headers | wc -l) -eq 2 ] && kubectl -n $ns get secret store-credentials >/dev/null && kubectl -n $ns get ingress >/dev/null"
   check "$s: ResourceQuota + LimitRange" "kubectl -n $ns get resourcequota --no-headers | grep -q quota && kubectl -n $ns get limitrange --no-headers | grep -q limits"
-  check "$s: storefront serves over its own Ingress host" "curl -s \$(store_field $s url)/ | grep -q 'Smoke $s'"
+  # (Traefik picks up a new Ingress within a few seconds)
+  check "$s: storefront serves over its own Ingress host" "( for _ in \$(seq 1 15); do curl -sL \$(store_field $s url)/ | grep -q 'Smoke $s' && exit 0; sleep 2; done; exit 1 )"
 done
 
 echo "== automatic MCP registration, tool names say which store"
-for _ in $(seq 1 15); do tools | grep -qw "${B}__list_orders" && break; sleep 2; done
+# The gateway's health loop connects to a new server within one interval (10 s).
+for _ in $(seq 1 20); do TL=$(tools); echo "$TL" | grep -qw "${A}__list_orders" && echo "$TL" | grep -qw "${B}__list_orders" && break; sleep 2; done
 TL=$(tools)
 check "both stores' tools are listed (${A}__list_orders, ${B}__list_orders)" "echo '$TL' | grep -qw ${A}__list_orders && echo '$TL' | grep -qw ${B}__list_orders"
 check "a store tool call is routed to that store" "call ${A}__list_products '{\"per_page\":1}' | grep -q products"
@@ -74,9 +76,10 @@ check "a store tool call is routed to that store" "call ${A}__list_products '{\"
 echo "== isolation between stores (NetworkPolicy)"
 POD_A=$(kubectl -n "store-$A" get pod -l app.kubernetes.io/component=mcp -o jsonpath='{.items[0].metadata.name}')
 check "store A's MCP server reaches its own WordPress" "kubectl -n store-$A exec $POD_A -- wget -qO- -T 4 http://woo-store-web:8080/wp-json/ >/dev/null 2>&1"
-# Blocked by policy = the connection times out (packets dropped); anything
-# else (an answer, even a protocol error) would mean it got through.
-blocked() { kubectl -n "store-$A" exec "$POD_A" -- wget -qO- -T 4 "$1" 2>&1 | grep -q 'timed out'; }
+# Blocked by policy = refused (k3s's kube-router REJECTs) or timed out (DROP).
+# The targets are listening, so any answer, even a protocol error, would
+# mean the packet got through.
+blocked() { kubectl -n "store-$A" exec "$POD_A" -- wget -qO- -T 4 "$1" 2>&1 | grep -qE 'refused|timed out'; }
 check "store A's MCP server cannot reach store B's WordPress" "blocked http://woo-store-web.store-$B.svc.cluster.local:8080/wp-json/"
 check "store A's MCP server cannot reach store B's database" "blocked http://woo-store-db.store-$B.svc.cluster.local:3306/"
 check "store A's MCP server cannot reach the gateway's Postgres" "blocked http://gateway-postgres.$GW_NS.svc.cluster.local:5432/"
@@ -101,7 +104,7 @@ for _ in $(seq 1 15); do tools | grep -qw "${H}__echo" && break; sleep 2; done
 check "hosted server is Ready and its tools are listed" "tools | grep -qw ${H}__echo"
 check "hosted pod: non-root, read-only root fs, limits set" "kubectl -n $HOSTED_NS get deploy hosted-$H -o jsonpath='{.spec.template.spec.securityContext.runAsNonRoot}{.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem}{.spec.template.spec.containers[0].resources.limits.memory}' | grep -q 'truetrue256Mi'"
 check "hosted server has its own Secret and NetworkPolicy" "kubectl -n $HOSTED_NS get secret hosted-$H >/dev/null && kubectl -n $HOSTED_NS get networkpolicy hosted-$H >/dev/null"
-check "image outside the allowed registries is rejected" "api POST /hosted '{\"name\":\"x\",\"slug\":\"evil$SUF\",\"image\":\"quay.io/evil/x:1\"}' | grep -q 'allowed registr'"
+check "image outside the allowed registries is rejected" "api POST /hosted '{\"name\":\"Evil\",\"slug\":\"evil$SUF\",\"image\":\"quay.io/evil/x:1\"}' | grep -q 'allowed registr'"
 HID=$(api GET /hosted | json "[h['id'] for h in d['servers'] if h['slug']=='$H'][0]")
 api DELETE "/hosted/$HID" >/dev/null
 for _ in $(seq 1 40); do api GET /hosted | grep -q "\"slug\":\"$H\"" || break; sleep 3; done

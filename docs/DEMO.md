@@ -78,7 +78,7 @@ kubectl -n store-salt-lake-cafe get pods -w        # the new store coming up
 ```bash
 POD=$(kubectl -n store-kolkata-sweets get pod -l app.kubernetes.io/component=mcp -o name)
 kubectl -n store-kolkata-sweets exec $POD -- wget -qO- -T4 http://woo-store-web:8080/wp-json/ | head -c 80   # own store: works
-kubectl -n store-kolkata-sweets exec $POD -- wget -qO- -T4 http://woo-store-web.store-howrah-bakery:8080/   # other store: times out
+kubectl -n store-kolkata-sweets exec $POD -- wget -qO- -T4 http://woo-store-web.store-howrah-bakery:8080/   # other store: refused by NetworkPolicy
 ```
 - Delete *Howrah Bakery*. It goes *Deleting*, then disappears. `kubectl get ns store-howrah-bakery` is gone, `kubectl get pv` shows its volumes gone, and its tools are gone from the chat and the external client.
 - Recovery (optional, or describe it): create a store, `kubectl -n gateway delete pod -l app.kubernetes.io/component=provisioner` mid-install. The new provisioner resumes, clears the interrupted release and finishes, or fails after the deadline with a reason.
