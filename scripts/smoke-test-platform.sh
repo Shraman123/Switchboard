@@ -63,7 +63,7 @@ for s in "$A" "$B"; do
   check "$s: namespace, 2 PVCs, Secret, Ingress" "[ \$(kubectl -n $ns get pvc --no-headers | wc -l) -eq 2 ] && kubectl -n $ns get secret store-credentials >/dev/null && kubectl -n $ns get ingress >/dev/null"
   check "$s: ResourceQuota + LimitRange" "kubectl -n $ns get resourcequota --no-headers | grep -q quota && kubectl -n $ns get limitrange --no-headers | grep -q limits"
   # (Traefik picks up a new Ingress within a few seconds)
-  check "$s: storefront serves over its own Ingress host" "( for _ in \$(seq 1 15); do curl -sL \$(store_field $s url)/ | grep -q 'Smoke $s' && exit 0; sleep 2; done; exit 1 )"
+  check "$s: storefront serves over its own Ingress host" "( for _ in \$(seq 1 15); do grep -q 'Smoke $s' <<<\"\$(curl -sL \$(store_field $s url)/)\" && exit 0; sleep 2; done; exit 1 )"
 done
 
 echo "== automatic MCP registration, tool names say which store"
@@ -79,7 +79,8 @@ check "store A's MCP server reaches its own WordPress" "kubectl -n store-$A exec
 # Blocked by policy = refused (k3s's kube-router REJECTs) or timed out (DROP).
 # The targets are listening, so any answer, even a protocol error, would
 # mean the packet got through.
-blocked() { kubectl -n "store-$A" exec "$POD_A" -- wget -qO- -T 4 "$1" 2>&1 | grep -qE 'refused|timed out'; }
+# (Output captured first: with pipefail, wget's non-zero exit would fail the pipe.)
+blocked() { local out; out=$(kubectl -n "store-$A" exec "$POD_A" -- wget -qO- -T 4 "$1" 2>&1); grep -qE 'refused|timed out' <<<"$out"; }
 check "store A's MCP server cannot reach store B's WordPress" "blocked http://woo-store-web.store-$B.svc.cluster.local:8080/wp-json/"
 check "store A's MCP server cannot reach store B's database" "blocked http://woo-store-db.store-$B.svc.cluster.local:3306/"
 check "store A's MCP server cannot reach the gateway's Postgres" "blocked http://gateway-postgres.$GW_NS.svc.cluster.local:5432/"
