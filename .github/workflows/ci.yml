@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -102,9 +103,10 @@ jobs:
             kubectl -n $ns logs -l app.kubernetes.io/part-of=switchboard --all-containers --tail=80 --prefix || true
           done
 
-  # Release images to GHCR from main (used by the VPS values file).
+  # Release images to GHCR: sha-<commit> + latest from main, X.Y.Z from a vX.Y.Z
+  # tag (what values-prod.yaml pins).
   images:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push'
     needs: [e2e]
     runs-on: ubuntu-24.04
     permissions:
@@ -121,5 +123,9 @@ jobs:
         run: |
           set -euo pipefail
           OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          REGISTRY=ghcr.io/$OWNER/switchboard TAG=sha-${GITHUB_SHA::7} scripts/build-images.sh
-          REGISTRY=ghcr.io/$OWNER/switchboard TAG=latest scripts/build-images.sh
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            REGISTRY=ghcr.io/$OWNER/switchboard TAG=${GITHUB_REF_NAME#v} scripts/build-images.sh
+          else
+            REGISTRY=ghcr.io/$OWNER/switchboard TAG=sha-${GITHUB_SHA::7} scripts/build-images.sh
+            REGISTRY=ghcr.io/$OWNER/switchboard TAG=latest scripts/build-images.sh
+          fi
