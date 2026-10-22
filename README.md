@@ -86,13 +86,16 @@ To switch to a real model later: `kubectl -n gateway patch secret gateway-secret
 
 ## VPS / production-like setup
 
-Same charts, `values-prod.yaml` instead of `values-local.yaml`: real domains, TLS through cert-manager, a registry image tag, secure cookies, HTTPS-only external upstreams. Full steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md):
+Same charts, `values-prod.yaml` instead of `values-local.yaml`: real domains, TLS through cert-manager, the published `ghcr.io/shraman123/switchboard/*:0.2.0` images (public, no pull secret), secure cookies, HTTPS-only external upstreams. Full steps are in [docs/OPERATIONS.md](docs/OPERATIONS.md):
 
 ```bash
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--secrets-encryption" sh -     # on the VPS
-REGISTRY=ghcr.io/<you>/switchboard TAG=0.1.0 scripts/build-images.sh             # from your laptop
-ADMIN_EMAIL=you@example.com LLM_API_KEY=gsk_... scripts/deploy.sh prod
+ADMIN_EMAIL=you@example.com scripts/deploy.sh prod                               # then scripts/set-llm-key.sh
 ```
+
+### Public HTTPS URL without a VPS
+
+`scripts/tunnel.sh` puts the local cluster behind a Cloudflare quick tunnel (no account, no card) and prints a `https://<random>.trycloudflare.com` URL. It switches `publicUrl` to that URL (so OAuth discovery, the MCP URL and invite links use it) and sets `ingress.host` to `gateway.localtest.me`, because the tunnel rewrites the Host header. Ctrl-C closes it and switches back. Both `scripts/smoke-test.sh` (30/30) and the OAuth e2e test (8/8) pass through the tunnel. The URL changes on every start and works only while the laptop is on, so it is for demos, not production.
 
 ## Using it
 
