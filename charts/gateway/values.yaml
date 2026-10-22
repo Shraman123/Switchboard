@@ -124,6 +124,7 @@ provisioner:
 
 ingress:
   className: traefik
+  host: ""          # defaults to publicUrl's host; set when a tunnel/proxy rewrites Host
   annotations: {}
   tls:
     enabled: false

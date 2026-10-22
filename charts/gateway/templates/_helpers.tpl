@@ -5,8 +5,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end }}
 
+{{/* Ingress host: the publicUrl's host, unless a tunnel or proxy in front rewrites Host (ingress.host). */}}
 {{- define "gw.host" -}}
-{{- regexReplaceAll "^https?://([^/:]+).*$" .Values.publicUrl "${1}" -}}
+{{- .Values.ingress.host | default (regexReplaceAll "^https?://([^/:]+).*$" .Values.publicUrl "${1}") -}}
 {{- end }}
 
 {{- define "gw.containerSecurity" -}}
