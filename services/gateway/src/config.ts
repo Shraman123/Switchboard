@@ -40,7 +40,7 @@ export const config = {
   llm: {
     baseUrl: opt("LLM_BASE_URL", "https://api.groq.com/openai/v1").replace(/\/$/, ""),
     apiKey: process.env.LLM_API_KEY ?? "",
-    model: opt("LLM_MODEL", "llama-3.3-70b-versatile"),
+    model: opt("LLM_MODEL", "openai/gpt-oss-120b"),
     maxSteps: Number(opt("CHAT_MAX_STEPS", "8")),
     timeoutMs: Number(opt("LLM_TIMEOUT_MS", "120000")),
     timezone: opt("CHAT_TIMEZONE", "Asia/Kolkata"),

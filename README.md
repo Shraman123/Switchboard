@@ -37,7 +37,7 @@ Dashboard chat agent ──────────────┘   (auth · po
 
 **Prerequisites:** Docker, [k3d](https://k3d.io) ≥ 5.8, kubectl, Helm 3, bash (Git Bash on Windows), Python 3 (used by the scripts for JSON), Node 22 (for the OAuth test), and about 4 GB of RAM free for Docker. Each provisioned store needs about 700 MB more.
 
-**Chat model.** By default the chat agent uses Groq's free tier (`llama-3.3-70b-versatile`, OpenAI-compatible). Get a key at console.groq.com and store it with `scripts/set-llm-key.sh`. The script reads the key without echoing it, writes it into the `gateway-secrets` Secret and restarts the gateway. For a fully offline setup, use a local model through [Ollama](https://ollama.com): run `ollama pull qwen2.5:3b`, then `LLM=ollama scripts/deploy.sh local`. That adds `values-ollama.yaml`: the Ollama URL on the host (`192.168.65.254:11434`, Docker Desktop's host address) plus one narrow egress rule for exactly that IP and port. Any OpenAI-compatible endpoint works.
+**Chat model.** By default the chat agent uses Groq's free tier (`openai/gpt-oss-120b`, OpenAI-compatible). Get a key at console.groq.com and store it with `scripts/set-llm-key.sh`. The script reads the key without echoing it, writes it into the `gateway-secrets` Secret and restarts the gateway. For a fully offline setup, use a local model through [Ollama](https://ollama.com): run `ollama pull qwen2.5:3b`, then `LLM=ollama scripts/deploy.sh local`. That adds `values-ollama.yaml`: the Ollama URL on the host (`192.168.65.254:11434`, Docker Desktop's host address) plus one narrow egress rule for exactly that IP and port. Any OpenAI-compatible endpoint works.
 
 ```bash
 scripts/up-local.sh

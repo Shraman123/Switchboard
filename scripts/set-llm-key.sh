@@ -4,7 +4,7 @@
 #   scripts/set-llm-key.sh
 set -euo pipefail
 NS="${GATEWAY_NS:-gateway}"
-read -rsp "LLM API key (input hidden): " KEY; echo
+read -rsp "LLM API key (input hidden): " KEY || true; echo
 [ -n "$KEY" ] || { echo "no key given" >&2; exit 1; }
 kubectl -n "$NS" patch secret gateway-secrets --type merge \
   -p "{\"data\":{\"llm-api-key\":\"$(printf %s "$KEY" | base64 | tr -d '\n')\"}}" >/dev/null
